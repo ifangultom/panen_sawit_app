@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -168,11 +169,24 @@ class DatabaseHelper {
     try {
       final user = data['user'] ?? 'unknown';
       final docId = "${user}_$id"; 
-      await FirebaseFirestore.instance.collection('panen').doc(docId).set(data);
+
+      // Buat copy data untuk Firebase agar tidak merubah data asli (yang berisi path)
+      Map<String, dynamic> syncData = Map.from(data);
+      
+      // Konversi Path ke Base64 untuk Web Admin jika kolom foto berisi path lokal
+      if (syncData['foto'] != null && syncData['foto'].isNotEmpty && !syncData['foto'].startsWith('data:image')) {
+        File f = File(syncData['foto']);
+        if (await f.exists()) {
+          List<int> imageBytes = await f.readAsBytes();
+          syncData['foto'] = "data:image/jpeg;base64,${base64Encode(imageBytes)}";
+        }
+      }
+
+      await FirebaseFirestore.instance.collection('panen').doc(docId).set(syncData);
       
       // Jika sukses, langsung tandai sudah sync
       await db.update('panen', {'sync_status': 'synced'}, where: 'id = ?', whereArgs: [id]);
-      print("✅ Data otomatis tersinkron");
+      print("✅ Data otomatis tersinkron ke Firebase (ID: $docId)");
     } catch (e) {
       print("ℹ️ Mode offline: Data disimpan lokal (ID: $id)");
     }
@@ -311,6 +325,15 @@ class DatabaseHelper {
 
         Map<String, dynamic> uploadMap = Map.from(dataMap);
         uploadMap['sync_status'] = 'synced';
+
+        // Konversi Path ke Base64 untuk Web Admin sebelum sync manual
+        if (uploadMap['foto'] != null && uploadMap['foto'].isNotEmpty && !uploadMap['foto'].startsWith('data:image')) {
+          File f = File(uploadMap['foto']);
+          if (await f.exists()) {
+            List<int> imageBytes = await f.readAsBytes();
+            uploadMap['foto'] = "data:image/jpeg;base64,${base64Encode(imageBytes)}";
+          }
+        }
 
         await FirebaseFirestore.instance.collection('panen').doc(docId).set(uploadMap);
         kirimKeLaravel(uploadMap).catchError((e) => print("Laravel skip: $e"));

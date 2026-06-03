@@ -221,10 +221,7 @@ Kota: Kota Medan
     Navigator.pop(context, true);
     _snack("Data berhasil disimpan");
 
-    // Kirim ke Firestore (Web langsung update)
-    await FirebaseFirestore.instance.collection('panen').add(dataFirestore);
-
-    // Simpan lokal & Kirim ke Laravel (Proses upload file asli)
+    // Simpan lokal & Sinkronisasi ditangani oleh DatabaseHelper
     await DatabaseHelper.instance.insertPanen(dataLokal);
     await ApiService.kirimPanen(dataLokal);
   }
