@@ -24,7 +24,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -111,6 +111,11 @@ class DatabaseHelper {
         trip_id INTEGER,
         berat_netto REAL,
         waktu_timbang TEXT,
+        no_plat TEXT,
+        sopir TEXT,
+        afdeling TEXT,
+        tanggal_trip TEXT,
+        kcs TEXT,
         sync_status TEXT
       )
     ''');
@@ -130,6 +135,13 @@ class DatabaseHelper {
     if (oldVersion < 5) {
       try { await db.execute("ALTER TABLE trip ADD COLUMN sync_status TEXT DEFAULT 'offline'"); } catch(_) {}
       try { await db.execute("ALTER TABLE pks ADD COLUMN sync_status TEXT DEFAULT 'offline'"); } catch(_) {}
+    }
+    if (oldVersion < 6) {
+      try { await db.execute("ALTER TABLE pks ADD COLUMN no_plat TEXT"); } catch(_) {}
+      try { await db.execute("ALTER TABLE pks ADD COLUMN sopir TEXT"); } catch(_) {}
+      try { await db.execute("ALTER TABLE pks ADD COLUMN afdeling TEXT"); } catch(_) {}
+      try { await db.execute("ALTER TABLE pks ADD COLUMN tanggal_trip TEXT"); } catch(_) {}
+      try { await db.execute("ALTER TABLE pks ADD COLUMN kcs TEXT"); } catch(_) {}
     }
   }
 
@@ -449,6 +461,16 @@ class DatabaseHelper {
     dynamic tripId = data['trip_id'];
     data['sync_status'] = 'offline';
 
+    // Enrichment Data for Local Fallback
+    final tripInfo = await db.query('trip', where: 'id = ?', whereArgs: [tripId]);
+    if (tripInfo.isNotEmpty) {
+      data['no_plat'] = tripInfo.first['no_plat'];
+      data['sopir'] = tripInfo.first['sopir'];
+      data['afdeling'] = tripInfo.first['afdeling'];
+      data['tanggal_trip'] = tripInfo.first['tanggal'];
+      data['kcs'] = tripInfo.first['kcs'];
+    }
+
     final existing = await getPksByTrip(tripId);
     if (existing == null) {
       await db.insert('pks', data);
@@ -457,16 +479,8 @@ class DatabaseHelper {
     }
 
     try {
-      final tripInfo = await db.query('trip', where: 'id = ?', whereArgs: [tripId]);
       Map<String, dynamic> syncMap = Map.from(data);
-      if (tripInfo.isNotEmpty) {
-        syncMap['no_plat'] = tripInfo.first['no_plat'];
-        syncMap['kendaraan'] = tripInfo.first['no_plat']; // Unifikasi
-        syncMap['sopir'] = tripInfo.first['sopir'];
-        syncMap['afdeling'] = tripInfo.first['afdeling'];
-        syncMap['tanggal_trip'] = tripInfo.first['tanggal'];
-        syncMap['kcs'] = tripInfo.first['kcs'];
-      }
+      syncMap['kendaraan'] = data['no_plat']; // Unifikasi field name
       syncMap['sync_status'] = 'synced';
 
       String kcs = tripInfo.isNotEmpty ? (tripInfo.first['kcs'] ?? 'unknown').toString() : 'unknown';

@@ -118,27 +118,56 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
 
     String whereClause = conditions.isNotEmpty ? "WHERE ${conditions.join(" AND ")}" : "";
 
+    final pksAll = await db.query('pks');
+
     final data = await db.rawQuery('''
       SELECT 
         t.id,
         t.tanggal,
         t.no_plat,
         t.sopir,
+        t.afdeling,
         COUNT(p.id) as jumlah_panen,
         SUM(CAST(p.matang AS INTEGER)) as total_janjang,
-        SUM(CAST(p.brondolan AS INTEGER)) as total_brondolan,
-        COALESCE(pk.berat_netto, 0) as total_pks
+        SUM(CAST(p.brondolan AS INTEGER)) as total_brondolan
       FROM trip t
       LEFT JOIN trip_detail td ON td.trip_id = t.id
       LEFT JOIN panen p ON p.id = td.panen_id
-      LEFT JOIN pks pk ON pk.trip_id = t.id
       $whereClause
       GROUP BY t.id
       ORDER BY t.tanggal DESC
     ''', args);
 
+    List<Map<String, dynamic>> enrichedList = data.map((t) {
+      String tripId = t['id'].toString();
+      
+      // Find matching PKS with fallback
+      var pksMatch = pksAll.where((pks) {
+        String pksTripId = pks['trip_id']?.toString() ?? "";
+        if (pksTripId == tripId) return true;
+        
+        String tripNoPlat = t['no_plat']?.toString() ?? "";
+        String tripTanggal = t['tanggal']?.toString().split(' ')[0] ?? "";
+        String pksNoPlat = pks['no_plat']?.toString() ?? "";
+        String pksTanggal = pks['tanggal_trip']?.toString().split(' ')[0] ?? "";
+        
+        return tripNoPlat.isNotEmpty && tripNoPlat == pksNoPlat && 
+               tripTanggal.isNotEmpty && tripTanggal == pksTanggal;
+      }).toList();
+
+      double pksBerat = 0;
+      if (pksMatch.isNotEmpty) {
+        pksBerat = double.tryParse(pksMatch.first['berat_netto']?.toString() ?? "0") ?? 0;
+      }
+
+      return {
+        ...t,
+        'total_pks': pksBerat,
+      };
+    }).toList();
+
     setState(() {
-      tripList = data;
+      tripList = enrichedList;
     });
   }
 
@@ -152,7 +181,17 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
         var pksMatch = allPksData.firstWhere(
           (p) {
             String pksTripId = p['trip_id']?.toString() ?? "";
-            return pksTripId != "" && (pksTripId == tripId || pksTripId == firebaseId);
+            if (pksTripId != "" && (pksTripId == tripId || pksTripId == firebaseId)) return true;
+            
+            // Fallback: Matching by No Plat and Tanggal
+            String tripNoPlat = t['no_plat']?.toString() ?? t['kendaraan']?.toString() ?? "";
+            String tripTanggal = (t['tanggal'] ?? t['tanggal_trip'])?.toString().split(' ')[0] ?? "";
+            
+            String pksNoPlat = p['no_plat']?.toString() ?? p['kendaraan']?.toString() ?? "";
+            String pksTanggal = (p['tanggal_trip'] ?? p['waktu_timbang'] ?? p['tanggal'])?.toString().split(' ')[0] ?? "";
+            
+            return tripNoPlat.isNotEmpty && tripNoPlat == pksNoPlat && 
+                   tripTanggal.isNotEmpty && tripTanggal == pksTanggal;
           },
           orElse: () => <String, dynamic>{},
         );

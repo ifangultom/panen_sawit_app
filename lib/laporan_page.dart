@@ -278,11 +278,20 @@ class _LaporanPanenPageState extends State<LaporanPanenPage> {
       String tripId = t['id']?.toString() ?? "";
       String firebaseId = t['id_firebase']?.toString() ?? "";
       
-      // Cari data PKS yang sesuai (matching trip_id atau id_firebase)
+      // Cari data PKS yang sesuai (matching trip_id atau id_firebase atau fallback enrichment)
       var pksMatch = allPksData.where((pks) {
         String pksTripId = pks['trip_id']?.toString() ?? "";
-        if (pksTripId.isEmpty) return false;
-        return pksTripId == tripId || pksTripId == firebaseId;
+        if (pksTripId.isNotEmpty && (pksTripId == tripId || pksTripId == firebaseId)) return true;
+        
+        // Fallback: Matching by No Plat and Tanggal (Enriched fields)
+        String tripNoPlat = t['no_plat']?.toString() ?? t['kendaraan']?.toString() ?? "";
+        String tripTanggal = (t['tanggal'] ?? t['tanggal_trip'])?.toString().split(' ')[0] ?? "";
+        
+        String pksNoPlat = pks['no_plat']?.toString() ?? pks['kendaraan']?.toString() ?? "";
+        String pksTanggal = (pks['tanggal_trip'] ?? pks['waktu_timbang'] ?? pks['tanggal'])?.toString().split(' ')[0] ?? "";
+        
+        return tripNoPlat.isNotEmpty && tripNoPlat == pksNoPlat && 
+               tripTanggal.isNotEmpty && tripTanggal == pksTanggal;
       }).toList();
 
       double pksBerat = 0;
@@ -424,24 +433,16 @@ class _LaporanPanenPageState extends State<LaporanPanenPage> {
       FROM panen $panenWhere
     ''', panenArgs);
 
-    // 2. Get Total Trip & PKS
-    final tripSum = await db.rawQuery('''
-      SELECT 
-        COUNT(DISTINCT t.id) as total_trip,
-        SUM(pk.berat_netto) as total_pks
-      FROM trip t
-      LEFT JOIN pks pk ON pk.trip_id = t.id
-      $tripWhere
-    ''', tripArgs);
-
+    // 2. Get All PKS for independent summing & enrichment
+    final pksAll = await db.query('pks');
+    
     // 3. Get Detail Panen
     final detail = await db.rawQuery("SELECT * FROM panen $panenWhere ORDER BY blok ASC", panenArgs);
 
-    // 4. Get Detail Trip (Gabungan Muatan, Janjang, Brondolan via trip_detail)
-    final detailTrip = await db.rawQuery('''
+    // 4. Get Detail Trip
+    final detailTripRaw = await db.rawQuery('''
       SELECT 
         t.*, 
-        pk.berat_netto,
         (SELECT COUNT(*) FROM trip_detail td WHERE td.trip_id = t.id) as muatan,
         (SELECT SUM(CAST(p.matang AS INTEGER)) 
          FROM panen p 
@@ -452,10 +453,51 @@ class _LaporanPanenPageState extends State<LaporanPanenPage> {
          JOIN trip_detail td ON td.panen_id = p.id 
          WHERE td.trip_id = t.id) as brondolan_trip
       FROM trip t 
-      LEFT JOIN pks pk ON pk.trip_id = t.id 
       $tripWhere 
       ORDER BY t.tanggal DESC
     ''', tripArgs);
+
+    // 5. Manual Processing for PKS sum and Enriched Trip Detail (Match step in _processData)
+    List<Map<String, dynamic>> filteredPksLocal = pksAll.where((pks) {
+      String? afd = pks['afdeling']?.toString();
+      if (selectedAfdeling != null && afd != selectedAfdeling) return false;
+      DateTime? dt = _parseDate(pks['waktu_timbang'] ?? pks['tanggal_trip'] ?? pks['tanggal']);
+      return _isWithinFilter(dt);
+    }).toList();
+
+    double sumPksLocal = 0;
+    for (var pks in filteredPksLocal) {
+      sumPksLocal += double.tryParse(pks['berat_netto']?.toString() ?? "0") ?? 0;
+    }
+
+    List<Map<String, dynamic>> enrichedTripsLocal = detailTripRaw.map((t) {
+      String tripId = t['id']?.toString() ?? "";
+      
+      // Robust joining for PKS
+      var pksMatch = pksAll.where((pks) {
+        String pksTripId = pks['trip_id']?.toString() ?? "";
+        if (pksTripId.isNotEmpty && pksTripId == tripId) return true;
+        
+        // Fallback: Matching by No Plat and Tanggal
+        String tripNoPlat = t['no_plat']?.toString() ?? "";
+        String tripTanggal = t['tanggal']?.toString().split(' ')[0] ?? "";
+        String pksNoPlat = pks['no_plat']?.toString() ?? "";
+        String pksTanggal = pks['tanggal_trip']?.toString().split(' ')[0] ?? "";
+        
+        return tripNoPlat.isNotEmpty && tripNoPlat == pksNoPlat && 
+               tripTanggal.isNotEmpty && tripTanggal == pksTanggal;
+      }).toList();
+
+      double pksBerat = 0;
+      if (pksMatch.isNotEmpty) {
+        pksBerat = double.tryParse(pksMatch.first['berat_netto']?.toString() ?? "0") ?? 0;
+      }
+
+      return {
+        ...t,
+        'berat_netto': pksBerat,
+      };
+    }).toList();
 
     if (mounted) {
       setState(() {
@@ -463,10 +505,10 @@ class _LaporanPanenPageState extends State<LaporanPanenPage> {
         totalJanjang = int.tryParse(panenSum.first['total_janjang'].toString()) ?? 0;
         totalBrondolan = double.tryParse(panenSum.first['total_brondolan'].toString()) ?? 0;
         jumlahPemanen = int.tryParse(panenSum.first['jumlah_pemanen'].toString()) ?? 0;
-        totalTrip = int.tryParse(tripSum.first['total_trip'].toString()) ?? 0;
-        totalPks = double.tryParse(tripSum.first['total_pks'].toString()) ?? 0;
+        totalTrip = detailTripRaw.length;
+        totalPks = sumPksLocal;
         listDetailPanen = detail;
-        listDetailTrip = detailTrip;
+        listDetailTrip = enrichedTripsLocal;
         isLoading = false;
       });
     }
