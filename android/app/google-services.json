@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "122513543211",
+    "project_id": "harvesttrack-feb35",
+    "storage_bucket": "harvesttrack-feb35.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:122513543211:android:337bf516a413ffe58bda6e",
+        "android_client_info": {
+          "package_name": "com.example.panen_sawit_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBUmRMbR5ZNBt0a9PLPbWILwwondAFe4ds"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

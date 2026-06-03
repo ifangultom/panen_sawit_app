@@ -1,0 +1,73 @@
+name: panen_sawit_app
+description: HARVESTTRACK
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # 🔥 FIREBASE (Gunakan versi stabil agar tidak blank di Android)
+  firebase_core: ^3.1.1
+  firebase_auth: ^5.1.2
+  cloud_firestore: ^5.0.2
+
+  # 🔥 UI & BASIC
+  cupertino_icons: ^1.0.9
+  shared_preferences: ^2.5.5
+
+  # 🔥 DATABASE
+  sqflite: ^2.4.2+1
+  path: ^1.9.1
+  path_provider: ^2.1.5
+
+  # 🔥 DEVICE FEATURE
+  image_picker: ^1.2.2
+  geolocator: ^14.0.2
+  camera: ^0.12.0+1
+
+  # 🔥 MAP
+  flutter_map: ^8.3.0
+  latlong2: ^0.9.1
+
+  # 🔥 CHART
+  fl_chart: ^1.2.0
+
+  # 🔥 EXPORT FILE
+  pdf: ^3.12.0
+  printing: ^5.14.3
+  excel: ^4.0.6
+
+  # 🔥 FIX (Gunakan open_filex versi terbaru)
+  open_filex: ^4.5.0
+
+  # 🔥 NETWORK
+  http: ^1.6.0
+  connectivity_plus: ^7.1.1
+
+  # 🔥 SHARE
+  share_plus: ^12.0.2
+
+  # 🔥 URL
+  url_launcher: ^6.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+# 🔥 CONFIG ICON
+flutter_launcher_icons:
+  android: "launcher_icon"
+  image_path: "assets/logo.png"
+  adaptive_icon_background: "#0D47A1"
+  adaptive_icon_foreground: "assets/logo.png"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
