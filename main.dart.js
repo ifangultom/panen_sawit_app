@@ -36720,7 +36720,8 @@ b_I:function b_I(a){this.a=a},
 b_D:function b_D(a){this.a=a},
 b_E:function b_E(a){this.a=a},
 b_F:function b_F(a){this.a=a},
-b_C:function b_C(a){this.a=a},
+b_C:function b_C(a,b){this.a=a
+this.b=b},
 b_G:function b_G(a){this.a=a},
 b_H:function b_H(a,b,c,d,e){var _=this
 _.a=a
@@ -37125,7 +37126,8 @@ b5E:function b5E(a){this.a=a},
 b5B:function b5B(){},
 b5u:function b5u(a){this.a=a},
 b5r:function b5r(a){this.a=a},
-b5p:function b5p(a){this.a=a},
+b5p:function b5p(a,b){this.a=a
+this.b=b},
 b5q:function b5q(){},
 b5s:function b5s(a){this.a=a},
 b5t:function b5t(a){this.a=a},
@@ -136471,15 +136473,14 @@ if(r==null)r=a.h(0,"tanggal")
 return q.QP(q.QT(r==null?a.h(0,"waktu"):r))},
 $S:12}
 A.b_F.prototype={
-$1(a){var s,r,q,p,o,n="berat_netto",m="total_pks",l=a.h(0,"id")
-l=l==null?null:J.a2(l)
-if(l==null){l=a.h(0,"trip_id")
-l=l==null?null:J.a2(l)
-s=l}else s=l
+$1(a){var s,r,q,p,o,n="berat_netto",m="total_pks",l=a.h(0,"id"),k=l==null?null:J.a2(l)
+if(k==null)k=""
+l=a.h(0,"id_firebase")
+s=l==null?null:J.a2(l)
 if(s==null)s=""
 l=this.a.dy
 r=A.T(l).i("aJ<1>")
-q=A.F(new A.aJ(l,new A.b_C(s),r),r.i("o.E"))
+q=A.F(new A.aJ(l,new A.b_C(k,s),r),r.i("o.E"))
 if(q.length!==0){p=B.l.gac(q)
 l=p.h(0,n)
 if(l==null)l=p.h(0,"netto")
@@ -136496,9 +136497,10 @@ if(r==null)r=0}l.l(0,m,r)
 return l},
 $S:188}
 A.b_C.prototype={
-$1(a){var s=a.h(0,"trip_id")
-s=s==null?null:J.a2(s)
-return s===this.a},
+$1(a){var s=a.h(0,"trip_id"),r=s==null?null:J.a2(s)
+if(r==null)r=""
+if(r.length===0)return!1
+return r===this.a||r===this.b},
 $S:12}
 A.b_G.prototype={
 $1(a){var s,r,q=a.h(0,"afdeling"),p=q==null?null:J.a2(q)
@@ -138636,13 +138638,12 @@ s.d=r
 B.l.dQ(r,new A.b5t(s))},
 $S:0}
 A.b5r.prototype={
-$1(a){var s,r,q,p,o,n,m=null,l="berat_netto",k="total_pks",j="afdeling",i="jumlah_panen",h="total_janjang",g="total_brondolan",f=a.h(0,"id")
-f=f==null?m:J.a2(f)
-if(f==null){f=a.h(0,"trip_id")
-f=f==null?m:J.a2(f)
-s=f}else s=f
+$1(a){var s,r,q,p,o,n,m=null,l="berat_netto",k="total_pks",j="afdeling",i="jumlah_panen",h="total_janjang",g="total_brondolan",f=a.h(0,"id"),e=f==null?m:J.a2(f)
+if(e==null)e=""
+f=a.h(0,"id_firebase")
+s=f==null?m:J.a2(f)
 if(s==null)s=""
-f=B.l.oI(this.a.e,new A.b5p(s),new A.b5q()).h(0,l)
+f=B.l.oI(this.a.e,new A.b5p(e,s),new A.b5q()).h(0,l)
 r=f==null?a.h(0,k):f
 if(r==null)r=a.h(0,l)
 if(typeof r=="number")q=r
@@ -138657,7 +138658,7 @@ if(o==null)o=""
 if(o==="KCS1")p="AFD1"
 else if(o==="KCS2")p="AFD2"
 else if(o==="KCS3")p="AFD3"}f=A.m9(a,t.N,t.z)
-f.l(0,"id",s)
+f.l(0,"id",e)
 f.l(0,"tanggal",a.h(0,"tanggal"))
 n=a.h(0,"no_plat")
 if(n==null)n=a.h(0,"kendaraan")
@@ -138680,7 +138681,11 @@ f.l(0,k,q)
 return f},
 $S:188}
 A.b5p.prototype={
-$1(a){return J.a2(a.h(0,"trip_id"))===this.a},
+$1(a){var s=a.h(0,"trip_id"),r=s==null?null:J.a2(s)
+if(r==null)r=""
+if(r!=="")s=r===this.a||r===this.b
+else s=!1
+return s},
 $S:12}
 A.b5q.prototype={
 $0(){return A.u(t.N,t.z)},
