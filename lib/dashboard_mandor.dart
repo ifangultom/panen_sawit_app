@@ -76,16 +76,31 @@ class _DashboardMandorState extends State<DashboardMandor> with SingleTickerProv
     }
 
     final prefs = await SharedPreferences.getInstance();
-    final afd = prefs.getString('afd_login') ?? "";
+    String afd   = prefs.getString('afd_login') ?? "";
+    
+    // Jika afd_login kosong (misal setelah update app), coba ambil dari afdeling_$user
+    if (afd.isEmpty && user.isNotEmpty) {
+      afd = prefs.getString('afdeling_$user') ?? "";
+      if (afd.isEmpty) {
+        // Fallback terakhir: mapping dari kcs_login
+        final kcs = prefs.getString('kcs_login') ?? "";
+        const map = {"KCS1": "AFD1", "KCS2": "AFD2", "KCS3": "AFD3"};
+        afd = map[kcs] ?? "";
+      }
+      if (afd.isNotEmpty) await prefs.setString('afd_login', afd);
+    }
+
     final foto = await UserHelper.getFoto(user);
 
-    setState(() {
-      username = user;
-      nama = data['nama'] ?? "";
-      jabatan = data['jabatan'] ?? "";
-      fotoPath = foto;
-      afdeling = afd;
-    });
+    if (mounted) {
+      setState(() {
+        username = user;
+        nama = data['nama'] ?? (prefs.getString('nama_$user') ?? "Mandor");
+        jabatan = data['jabatan'] ?? "Mandor";
+        fotoPath = foto;
+        afdeling = afd;
+      });
+    }
   }
 
   @override

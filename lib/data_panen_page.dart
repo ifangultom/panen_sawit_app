@@ -61,15 +61,19 @@ class _DataPanenPageState extends State<DataPanenPage> {
     final prefs = await SharedPreferences.getInstance();
     String user  = prefs.getString('current_user') ?? "";
     afdelingUser = prefs.getString('afd_login')    ?? "";
-    roleUser     = prefs.getString('role_$user')   ?? "";
+    roleUser     = (prefs.getString('role_$user')   ?? "").toUpperCase();
 
-    // 🔥 FIX: jika afd_login kosong, mapping dari kcs_login
-    // INI PENTING: mandor KCS1 = AFD1, KCS2 = AFD2, KCS3 = AFD3
+    // 🔥 FIX: pastikan afdelingUser terisi untuk Mandor
     if (afdelingUser.isEmpty) {
-      final kcsLogin = prefs.getString('kcs_login') ?? "";
-      const kcsToAfd = {"KCS1": "AFD1", "KCS2": "AFD2", "KCS3": "AFD3"};
-      afdelingUser = kcsToAfd[kcsLogin] ?? "";
-      // Simpan juga supaya konsisten di session ini
+      // Coba ambil afdeling langsung dari user data jika afd_login kosong
+      afdelingUser = prefs.getString('afdeling_$user') ?? "";
+      
+      if (afdelingUser.isEmpty) {
+        final kcsLogin = prefs.getString('kcs_login') ?? "";
+        const kcsToAfd = {"KCS1": "AFD1", "KCS2": "AFD2", "KCS3": "AFD3"};
+        afdelingUser = kcsToAfd[kcsLogin] ?? "";
+      }
+      
       if (afdelingUser.isNotEmpty) {
         await prefs.setString('afd_login', afdelingUser);
       }
@@ -91,7 +95,7 @@ class _DataPanenPageState extends State<DataPanenPage> {
 
         // Filter afdeling
         if (roleUser != "ADMIN" && afdelingUser.isNotEmpty) {
-          query = query.where('afdeling', isEqualTo: afdelingUser);
+          query = query.where('afdeling', isEqualTo: afdelingUser.trim().toUpperCase());
         }
 
         // Jika filter bulan/tahun dipilih (Filter Tambahan)
@@ -592,7 +596,9 @@ class _DataPanenPageState extends State<DataPanenPage> {
                 final item   = data[index];
                 final status = (item['status'] ?? 'pending').toString().toLowerCase();
                 final isPending = status == 'pending';
-                final itemId = item['id'] as int;
+                
+                // 🔥 FIX CRASH: Gunakan int.tryParse atau num.parse untuk ID yang aman
+                final itemId = int.tryParse(item['id'].toString()) ?? 0;
                 final isSelected = selectedIds.contains(itemId);
 
                 return GestureDetector(
