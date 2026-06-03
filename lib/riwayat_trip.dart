@@ -146,10 +146,14 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
     if (!mounted) return;
     setState(() {
       List<Map<String, dynamic>> allFetched = allTripsData.map((t) {
-        String tripId = t['id']?.toString() ?? t['trip_id']?.toString() ?? "";
+        String tripId = t['id']?.toString() ?? "";
+        String firebaseId = t['id_firebase']?.toString() ?? "";
 
         var pksMatch = allPksData.firstWhere(
-          (p) => p['trip_id'].toString() == tripId,
+          (p) {
+            String pksTripId = p['trip_id']?.toString() ?? "";
+            return pksTripId != "" && (pksTripId == tripId || pksTripId == firebaseId);
+          },
           orElse: () => <String, dynamic>{},
         );
 

@@ -275,10 +275,16 @@ class _LaporanPanenPageState extends State<LaporanPanenPage> {
 
     // 3. Gabungkan data Trip dengan PKS berdasarkan trip_id untuk Riwayat Trip
     List<Map<String, dynamic>> enrichedTrips = allTrips.map((t) {
-      String tripId = t['id']?.toString() ?? t['trip_id']?.toString() ?? "";
+      String tripId = t['id']?.toString() ?? "";
+      String firebaseId = t['id_firebase']?.toString() ?? "";
       
-      // Cari data PKS yang sesuai (matching trip_id)
-      var pksMatch = allPksData.where((pks) => pks['trip_id']?.toString() == tripId).toList();
+      // Cari data PKS yang sesuai (matching trip_id atau id_firebase)
+      var pksMatch = allPksData.where((pks) {
+        String pksTripId = pks['trip_id']?.toString() ?? "";
+        if (pksTripId.isEmpty) return false;
+        return pksTripId == tripId || pksTripId == firebaseId;
+      }).toList();
+
       double pksBerat = 0;
       if (pksMatch.isNotEmpty) {
         var firstPks = pksMatch.first;
