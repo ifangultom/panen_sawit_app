@@ -142,12 +142,8 @@ class _ResetDataPageState extends State<ResetDataPage> {
 
     setState(() => isLoading = true);
 
-    // 1. Hapus semua tabel SQLite
-    final db = await DatabaseHelper.instance.database;
-    await db.delete('panen');
-    await db.delete('trip_detail');
-    await db.delete('pks');
-    await db.delete('trip');
+    // 1. Hapus semua tabel SQLite menggunakan fungsi global
+    await DatabaseHelper.instance.clearAllData();
 
     // 2. Hapus semua SharedPreferences (semua akun, semua session)
     final prefs = await SharedPreferences.getInstance();
@@ -334,6 +330,47 @@ class _ResetDataPageState extends State<ResetDataPage> {
               subtitle: "Hapus semua data + akun, kembali seperti baru install",
               color: Colors.red.shade900,
               onTap: _resetSemuaLokal,
+            ),
+
+            const SizedBox(height: 10),
+
+            _resetCard(
+              icon: Icons.refresh_rounded,
+              title: "Sinkron Ulang Master Data",
+              subtitle: "Ambil ulang data Pemanen & Blok dari Cloud",
+              color: const Color(0xFF0D47A1),
+              onTap: () async {
+                setState(() => isLoading = true);
+                try {
+                  await DatabaseHelper.instance.syncHarvesters();
+                  await DatabaseHelper.instance.syncBlocks();
+                  _snack("✅ Master data berhasil disinkronkan", const Color(0xFF0D47A1));
+                } catch (e) {
+                  _snack("❌ Gagal sinkron: $e", Colors.red);
+                } finally {
+                  setState(() => isLoading = false);
+                }
+              },
+            ),
+
+            const SizedBox(height: 10),
+
+            _resetCard(
+              icon: Icons.cloud_upload_rounded,
+              title: "Upload Ulang Data Transaksi",
+              subtitle: "Kirim kembali data Panen & Trip ke Cloud",
+              color: Colors.teal,
+              onTap: () async {
+                setState(() => isLoading = true);
+                try {
+                  await DatabaseHelper.instance.resetSyncStatus();
+                  _snack("✅ Status sinkronisasi direset. Silakan masuk ke menu Sinkronisasi.", Colors.teal);
+                } catch (e) {
+                  _snack("❌ Gagal reset: $e", Colors.red);
+                } finally {
+                  setState(() => isLoading = false);
+                }
+              },
             ),
 
             const SizedBox(height: 24),

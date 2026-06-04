@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -24,7 +25,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 6,
+      version: 9,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -64,6 +65,7 @@ class DatabaseHelper {
       CREATE TABLE IF NOT EXISTS panen (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         tanggal TEXT,
+        waktu TEXT,
         pemanen TEXT,
         blok TEXT,
         tph TEXT,
@@ -119,6 +121,22 @@ class DatabaseHelper {
         sync_status TEXT
       )
     ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS harvesters_local (
+        id TEXT PRIMARY KEY,
+        nama TEXT,
+        afdeling TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS blocks_local (
+        id TEXT PRIMARY KEY,
+        kcs TEXT,
+        blok TEXT
+      )
+    ''');
   }
 
   // ================= UPGRADE =================
@@ -143,9 +161,52 @@ class DatabaseHelper {
       try { await db.execute("ALTER TABLE pks ADD COLUMN tanggal_trip TEXT"); } catch(_) {}
       try { await db.execute("ALTER TABLE pks ADD COLUMN kcs TEXT"); } catch(_) {}
     }
+    if (oldVersion < 7) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS harvesters_local (
+          id TEXT PRIMARY KEY,
+          nama TEXT,
+          afdeling TEXT
+        )
+      ''');
+    }
+    if (oldVersion < 8) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS blocks_local (
+          id TEXT PRIMARY KEY,
+          kcs TEXT,
+          blok TEXT
+        )
+      ''');
+    }
+    if (oldVersion < 9) {
+      try {
+        await db.execute("ALTER TABLE panen ADD COLUMN waktu TEXT");
+      } catch (_) {}
+    }
   }
 
   // ================= FIREBASE =================
+  Future<void> clearAllData() async {
+    final db = await database;
+    await db.delete('panen');
+    await db.delete('trip');
+    await db.delete('trip_detail');
+    await db.delete('pks');
+    await db.delete('harvesters_local');
+    await db.delete('blocks_local');
+    print("🔥 Seluruh database lokal telah dibersihkan");
+  }
+
+  /// Paksa semua data lokal untuk diupload ulang ke cloud
+  Future<void> resetSyncStatus() async {
+    final db = await database;
+    await db.update('panen', {'sync_status': 'offline'});
+    await db.update('trip', {'sync_status': 'offline'});
+    await db.update('pks', {'sync_status': 'offline'});
+    print("🔄 Status sinkronisasi telah direset ke offline");
+  }
+
   Future<void> kirimKeFirebase(Map<String, dynamic> data) async {
     try {
       await FirebaseFirestore.instance.collection('panen').add(data);
@@ -159,21 +220,9 @@ class DatabaseHelper {
   Future<int> insertPanen(Map<String, dynamic> data) async {
     final db = await database;
 
+    // 🔥 Sync Status
     data['sync_status'] = 'offline';
     data['status'] = 'pending';
-
-    String kcs = data['kcs'] ?? "";
-
-    // 🔥 Mapping KCS → Afdeling & Mandor
-    const kcsToAfd    = {"KCS1": "AFD1",       "KCS2": "AFD2",       "KCS3": "AFD3"};
-    const kcsToMandor = {"KCS1": "mandor_afd1","KCS2": "mandor_afd2","KCS3": "mandor_afd3"};
-
-    if ((data['afdeling'] ?? "").isEmpty && kcsToAfd.containsKey(kcs)) {
-      data['afdeling'] = kcsToAfd[kcs];
-    }
-    if ((data['mandor'] ?? "").isEmpty && kcsToMandor.containsKey(kcs)) {
-      data['mandor'] = kcsToMandor[kcs];
-    }
 
     int id = await db.insert('panen', data);
 
@@ -189,8 +238,14 @@ class DatabaseHelper {
       if (syncData['foto'] != null && syncData['foto'].isNotEmpty && !syncData['foto'].startsWith('data:image')) {
         File f = File(syncData['foto']);
         if (await f.exists()) {
-          List<int> imageBytes = await f.readAsBytes();
-          syncData['foto'] = "data:image/jpeg;base64,${base64Encode(imageBytes)}";
+          int fileSize = await f.length();
+          if (fileSize < 800000) { // Hanya kirim jika < 800KB (Base64 akan membengkak ke ~1MB)
+            List<int> imageBytes = await f.readAsBytes();
+            syncData['foto'] = "data:image/jpeg;base64,${base64Encode(imageBytes)}";
+          } else {
+            syncData['foto'] = ""; // Kosongkan foto jika terlalu besar agar data teks tetap masuk
+            print("⚠️ Foto terlalu besar (${(fileSize/1024/1024).toStringAsFixed(2)}MB), mengirim data tanpa foto.");
+          }
         }
       }
 
@@ -242,6 +297,8 @@ class DatabaseHelper {
       where: 'id = ?',
       whereArgs: [id],
     );
+    // Langsung coba sinkronkan status ke Firebase
+    syncData();
   }
 
   Future<void> rejectPanen(int id) async {
@@ -252,6 +309,8 @@ class DatabaseHelper {
       where: 'id = ?',
       whereArgs: [id],
     );
+    // Langsung coba sinkronkan status ke Firebase
+    syncData();
   }
 
   // ================= TRACKING =================
@@ -287,6 +346,83 @@ class DatabaseHelper {
     ORDER BY id DESC
   ''', [kcs, tanggal]);
   }
+  // ================= AMBIL DATA HARVESTERS & BLOCKS DARI FIREBASE =================
+  Future<void> syncHarvesters() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance.collection('harvesters').get();
+      final db = await database;
+      
+      final batch = db.batch();
+      // Bersihkan data lama agar sinkron sempurna
+      batch.delete('harvesters_local');
+      
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        batch.insert('harvesters_local', {
+          'id': doc.id,
+          'nama': data['nama'],
+          'afdeling': data['afdeling'],
+        });
+      }
+      
+      await batch.commit(noResult: true);
+      print("✅ Berhasil sinkron ${snapshot.docs.length} pemanen ke lokal");
+    } catch (e) {
+      print("❌ Gagal sinkron harvesters: $e");
+    }
+  }
+
+  Future<void> syncBlocks() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance.collection('blocks').get();
+      final db = await database;
+      
+      final batch = db.batch();
+      batch.delete('blocks_local');
+      
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        batch.insert('blocks_local', {
+          'id': doc.id,
+          'kcs': data['kcs'],
+          'blok': data['blok'],
+        });
+      }
+      
+      await batch.commit(noResult: true);
+      print("✅ Berhasil sinkron ${snapshot.docs.length} blok ke lokal");
+    } catch (e) {
+      print("❌ Gagal sinkron blocks: $e");
+    }
+  }
+
+  Future<List<String>> getHarvestersByAfdeling(String afdeling) async {
+    final db = await database;
+    final res = await db.query(
+      'harvesters_local',
+      where: 'afdeling = ?',
+      whereArgs: [afdeling],
+      orderBy: 'nama ASC',
+    );
+    return res.map((e) => e['nama'].toString()).toList();
+  }
+
+  Future<Map<String, List<String>>> getAllBlocksGroupedByKCS() async {
+    final db = await database;
+    final res = await db.query('blocks_local', orderBy: 'kcs ASC, blok ASC');
+    
+    Map<String, List<String>> grouped = {};
+    for (var row in res) {
+      String kcs = row['kcs'].toString();
+      String blok = row['blok'].toString();
+      if (!grouped.containsKey(kcs)) {
+        grouped[kcs] = [];
+      }
+      grouped[kcs]!.add(blok);
+    }
+    return grouped;
+  }
+
   Future<void> ambilDataDariFirebase() async {
     try {
       final snapshot = await FirebaseFirestore.instance
@@ -324,8 +460,7 @@ class DatabaseHelper {
     // 1. Sync Panen
     final dataList = await db.query(
       'panen',
-      where: "sync_status IS NULL OR sync_status != ?",
-      whereArgs: ['synced'],
+      where: "sync_status IS NULL OR sync_status = 'offline' OR sync_status = 'update' OR sync_status != 'synced'",
     );
 
     for (var data in dataList) {
@@ -337,13 +472,23 @@ class DatabaseHelper {
 
         Map<String, dynamic> uploadMap = Map.from(dataMap);
         uploadMap['sync_status'] = 'synced';
+        // Pastikan status juga ikut terkirim jika sudah di-ACC/REJECT secara lokal
+        if (uploadMap['status'] == null) {
+          uploadMap['status'] = 'pending';
+        }
 
         // Konversi Path ke Base64 untuk Web Admin sebelum sync manual
         if (uploadMap['foto'] != null && uploadMap['foto'].isNotEmpty && !uploadMap['foto'].startsWith('data:image')) {
           File f = File(uploadMap['foto']);
           if (await f.exists()) {
-            List<int> imageBytes = await f.readAsBytes();
-            uploadMap['foto'] = "data:image/jpeg;base64,${base64Encode(imageBytes)}";
+            int fileSize = await f.length();
+            if (fileSize < 800000) {
+              List<int> imageBytes = await f.readAsBytes();
+              uploadMap['foto'] = "data:image/jpeg;base64,${base64Encode(imageBytes)}";
+            } else {
+              uploadMap['foto'] = ""; 
+              print("⚠️ Foto ID $id terlalu besar, dikirim tanpa foto.");
+            }
           }
         }
 

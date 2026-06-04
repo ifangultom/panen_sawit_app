@@ -55,7 +55,16 @@ class _DashboardAdminState extends State<DashboardAdmin> {
   String _username = "";
   String _fotoPath = "";
 
+  // Harvester Registration State
+  final TextEditingController _namaPemanenC = TextEditingController();
+  String? _selectedAfdPemanen;
+
+  // Block Registration State
+  final TextEditingController _blokC = TextEditingController();
+  String? _selectedKcsBlok;
+
   final List<String> afdelings = ["AFD1", "AFD2", "AFD3"];
+  final List<String> kcsList = ["KCS1", "KCS2", "KCS3"];
   final List<String> months = [
     "Januari", "Februari", "Maret", "April", "Mei", "Juni",
     "Juli", "Agustus", "September", "Oktober", "November", "Desember"
@@ -68,6 +77,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
   int totalPanen = 0;
   double totalTon = 0;
   int jumlahPemanen = 0;
+  int totalRegisteredPemanen = 0;
   int totalTrip = 0;
   String syncStatus = "Terkoneksi";
   List<FlSpot> chartSpots = [];
@@ -184,6 +194,13 @@ class _DashboardAdminState extends State<DashboardAdmin> {
         });
         applyFilter();
       }, onError: (e) => debugPrint("❌ Error Trips Listener: $e"));
+
+      FirebaseFirestore.instance.collection('harvesters').snapshots().listen((snapshot) {
+        if (!mounted) return;
+        setState(() {
+          totalRegisteredPemanen = snapshot.docs.length;
+        });
+      }, onError: (e) => debugPrint("❌ Error Harvesters Listener: $e"));
     } catch (e) {
       debugPrint("❌ Error loadFromFirebase: $e");
     }
@@ -363,6 +380,88 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     }
   }
 
+  // ─── HARVESTER MANAGEMENT LOGIC ───
+  Future<void> _simpanPemanen() async {
+    if (_namaPemanenC.text.isEmpty || _selectedAfdPemanen == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Nama dan Afdeling harus diisi"), backgroundColor: Colors.orange)
+      );
+      return;
+    }
+
+    try {
+      await FirebaseFirestore.instance.collection('harvesters').add({
+        'nama': _namaPemanenC.text.trim(),
+        'afdeling': _selectedAfdPemanen?.trim(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      if (mounted) {
+        _namaPemanenC.clear();
+        setState(() => _selectedAfdPemanen = null);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Pemanen berhasil didaftarkan ke sistem"),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+          )
+        );
+      }
+    } catch (e) {
+      debugPrint("Gagal daftar pemanen: $e");
+    }
+  }
+
+  Future<void> _importDataPemanenDefault() async {
+    final Map<String, List<String>> defaultData = {
+      "AFD1": [
+        "Ahmad Syahputra", "Budi Santoso", "Dedi Saputra", "Eko Prasetyo", 
+        "Faisal Harahap", "Gunawan Siregar", "Hendri Simatupang", 
+        "Irwan Nasution", "Joko Susanto", "Kurniawan Gultom"
+      ],
+      "AFD2": [
+        "Lukman Hakim", "Mulyadi Sinaga", "Nurhadi Sitorus", "Ongki Manurung", 
+        "Parlindungan Simanjuntak", "Rahmat Hidayat", "Sabar Hutagalung", 
+        "Taufik Hutasoit", "Ucok Situmorang", "Verry Silaban", 
+        "Wahyu Ramadhan", "Yanto Purba"
+      ],
+      "AFD3": [
+        "Zulkifli Pane", "Andi Saputra", "Bambang Setiawan", "Chandra Wijaya", 
+        "Doni Irawan", "Erwin Lubis", "Firman Pasaribu", "Ganda Marbun", 
+        "Ama Gulo", "Yared Zega", "Fajar Laoli", "Putra Harefa", "Riko Zebua"
+      ],
+    };
+
+    setState(() => isLoading = true);
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      final collection = FirebaseFirestore.instance.collection('harvesters');
+
+      defaultData.forEach((afd, names) {
+        for (var name in names) {
+          var docRef = collection.doc();
+          batch.set(docRef, {
+            'nama': name,
+            'afdeling': afd,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+      });
+
+      await batch.commit();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Berhasil mengimpor daftar pemanen default"), backgroundColor: Colors.green)
+        );
+      }
+    } catch (e) {
+      debugPrint("Error import: $e");
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
   // Helper widget to handle profile image rendering with fallback
   Widget _buildProfileImageWidget(double size) {
     final provider = _getProfileImage();
@@ -511,6 +610,28 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     if (val == null) return null;
     if (val is Timestamp) return val.toDate();
     if (val is DateTime) return val;
+    if (val is String) {
+      try {
+        return DateTime.parse(val);
+      } catch (_) {
+        try {
+          // Handle format "dd MMM yyyy" atau "dd MMMM yyyy"
+          final parts = val.split(' ');
+          if (parts.length >= 3) {
+            int day = int.parse(parts[0]);
+            int year = int.parse(parts[2]);
+            const monthsMap = {
+              'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'Mei': 5, 'Jun': 6,
+              'Jul': 7, 'Ags': 8, 'Sep': 9, 'Okt': 10, 'Nov': 11, 'Des': 12,
+              'Januari': 1, 'Februari': 2, 'Maret': 3, 'April': 4, 'Juni': 6,
+              'Juli': 7, 'Agustus': 8, 'September': 9, 'Oktober': 10, 'November': 11, 'Desember': 12
+            };
+            int month = monthsMap[parts[1]] ?? 1;
+            return DateTime(year, month, day);
+          }
+        } catch (_) {}
+      }
+    }
     return DateTime.tryParse(val.toString());
   }
 
@@ -522,16 +643,22 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     Map<String, Map<String, dynamic>> rankingMap = {};
 
     for (var item in filteredPanen) {
+      // Ambil nama pemanen terlebih dahulu (semua status) untuk hitungan KPI
+      String? namaPemanen = item['pemanen']?.toString();
+      if (namaPemanen != null && namaPemanen.isNotEmpty) {
+        pemanenSet.add(namaPemanen);
+      }
+
+      // Hanya hitung angka Janjang & Ranking untuk data yang sudah di-ACC
+      if ((item['status'] ?? item['sync_status']) != "ACC" && (item['status'] ?? item['sync_status']) != "acc") continue;
+
       int matang = int.tryParse(item['matang']?.toString() ?? "0") ?? 0;
       int mentah = int.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
       int total = matang + mentah;
       totalJjg += total;
       
-      String pemanen = item['pemanen'] ?? "Unknown";
-      if (item['pemanen'] != null) {
-        pemanenSet.add(pemanen);
-        
-        if (!rankingMap.containsKey(pemanen)) {
+      if (namaPemanen != null) {
+        if (!rankingMap.containsKey(namaPemanen)) {
           String? afd = item['afdeling']?.toString();
           if (afd == null || afd.isEmpty) {
             String kcs = item['kcs']?.toString() ?? "";
@@ -543,15 +670,15 @@ class _DashboardAdminState extends State<DashboardAdmin> {
               afd = "AFD3";
             }
           }
-          rankingMap[pemanen] = {
-            'nama': pemanen, 
+          rankingMap[namaPemanen] = {
+            'nama': namaPemanen, 
             'janjang': 0, 
             'brondolan': 0.0,
             'afdeling': afd ?? "-"
           };
         }
-        rankingMap[pemanen]!['janjang'] += total;
-        rankingMap[pemanen]!['brondolan'] += double.tryParse(item['brondolan']?.toString() ?? "0") ?? 0;
+        rankingMap[namaPemanen]!['janjang'] += total;
+        rankingMap[namaPemanen]!['brondolan'] += double.tryParse(item['brondolan']?.toString() ?? "0") ?? 0;
       }
     }
 
@@ -592,8 +719,9 @@ class _DashboardAdminState extends State<DashboardAdmin> {
         DateTime? dt = _parseDate(item['tanggal'] ?? item['waktu']);
         if (dt != null) {
           double month = dt.month.toDouble();
-          int total = (int.tryParse(item['matang']?.toString() ?? "0") ?? 0) + 
-                      (int.tryParse(item['mentah']?.toString() ?? "0") ?? 0);
+          double matang = double.tryParse(item['matang']?.toString() ?? "0") ?? 0;
+          double mentah = double.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
+          double total = double.tryParse(item['janjang']?.toString() ?? "") ?? (matang + mentah);
           stats[month] = (stats[month] ?? 0) + total;
         }
       }
@@ -603,8 +731,9 @@ class _DashboardAdminState extends State<DashboardAdmin> {
         DateTime? dt = _parseDate(item['tanggal'] ?? item['waktu']);
         if (dt != null) {
           double day = dt.day.toDouble();
-          int total = (int.tryParse(item['matang']?.toString() ?? "0") ?? 0) + 
-                      (int.tryParse(item['mentah']?.toString() ?? "0") ?? 0);
+          double matang = double.tryParse(item['matang']?.toString() ?? "0") ?? 0;
+          double mentah = double.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
+          double total = double.tryParse(item['janjang']?.toString() ?? "") ?? (matang + mentah);
           stats[day] = (stats[day] ?? 0) + total;
         }
       }
@@ -614,17 +743,41 @@ class _DashboardAdminState extends State<DashboardAdmin> {
         DateTime? dt = _parseDate(item['waktu'] ?? item['tanggal']);
         if (dt != null) {
           double hour = dt.hour.toDouble();
-          int total = (int.tryParse(item['matang']?.toString() ?? "0") ?? 0) + 
-                      (int.tryParse(item['mentah']?.toString() ?? "0") ?? 0);
+          // Jika hour adalah 0 (mungkin karena hanya simpan tanggal), 
+          // coba lihat apakah ada data jam di string
+          if (hour == 0 && (item['waktu'] ?? item['tanggal']) is String) {
+             try {
+               // Asumsi format ISO atau ada jam di belakang
+               String s = (item['waktu'] ?? item['tanggal']);
+               if (s.contains("T")) {
+                 hour = DateTime.parse(s).hour.toDouble();
+               }
+             } catch(_) {}
+          }
+          double matang = double.tryParse(item['matang']?.toString() ?? "0") ?? 0;
+          double mentah = double.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
+          double total = double.tryParse(item['janjang']?.toString() ?? "") ?? (matang + mentah);
           stats[hour] = (stats[hour] ?? 0) + total;
         }
       }
     }
 
-    if (stats.isEmpty) return [const FlSpot(0, 0)];
+    if (stats.isEmpty) return [];
     
     List<FlSpot> spots = stats.entries.map((e) => FlSpot(e.key, e.value)).toList();
     spots.sort((a, b) => a.x.compareTo(b.x));
+
+    // Jika hanya ada 1 titik, tambahkan titik 0 di awal dan akhir jam kerja agar membentuk garis
+    if (spots.length == 1) {
+      double x = spots[0].x;
+      double y = spots[0].y;
+      return [
+        FlSpot(x > 6 ? 6 : x - 1, 0),
+        spots[0],
+        FlSpot(x < 18 ? 18 : x + 1, 0),
+      ];
+    }
+
     return spots;
   }
 
@@ -796,7 +949,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
                 onTap: () => setState(() => _activeView = "data_pks")),
             kpiCard("Trip Mobil", totalTrip.toString(), "Trip", Icons.local_shipping_rounded, Colors.orange,
                 onTap: () => setState(() => _activeView = "trip_mobil")),
-            kpiCard("Nama Pemanen", jumlahPemanen.toString(), "Orang", Icons.people, Colors.purple,
+            kpiCard("Jumlah Pemanen", jumlahPemanen.toString(), "Orang", Icons.people, Colors.purple,
                 onTap: () => _showPemanenDialog()),
           ],
         ),
@@ -890,6 +1043,360 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     );
   }
 
+  Widget _webViewDaftarPemanen() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('harvesters').snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(child: Text("Terjadi kesalahan: ${snapshot.error}"));
+        }
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        
+        final docs = snapshot.data?.docs ?? [];
+        Map<String, List<String>> grouped = {};
+        
+        // Debugging log (hanya terlihat di konsol pengembang)
+        debugPrint("DEBUG: Ditemukan ${docs.length} dokumen di koleksi 'harvesters'");
+
+        if (docs.isNotEmpty) {
+          for (var doc in docs) {
+            var data = doc.data() as Map<String, dynamic>;
+            // Normalisasi key Afdeling agar konsisten
+            String rawAfd = (data['afdeling'] ?? "Unknown").toString().toUpperCase().replaceAll(" ", "");
+            String nama = (data['nama'] ?? "Tanpa Nama").toString().trim();
+            
+            if (nama.isNotEmpty) {
+              grouped.putIfAbsent(rawAfd, () => []).add(nama);
+            }
+          }
+          grouped.forEach((key, value) => value.sort());
+        }
+
+        if (grouped.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.people_outline, size: 80, color: Colors.grey[300]),
+                const SizedBox(height: 16),
+                const Text(
+                  "Database Pemanen Kosong", 
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey)
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  "Ditemukan ${docs.length} data mentah di server.\nPastikan pendaftaran berhasil (ada pesan sukses).", 
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey, fontSize: 13)
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () => setState(() => _activeView = "registrasi_pemanen"),
+                      icon: const Icon(Icons.add),
+                      label: const Text("Daftarkan Sekarang"),
+                      style: ElevatedButton.styleFrom(backgroundColor: primaryBlue, foregroundColor: Colors.white),
+                    ),
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      onPressed: () => setState(() {}),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text("Refresh"),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        }
+
+        var sortedAfds = grouped.keys.toList()..sort();
+
+        return ListView(
+          padding: const EdgeInsets.all(25),
+          children: [
+            modernCard(
+              title: "Daftar Master Pemanen",
+              subtitle: "Total Terdaftar: ${docs.length} Orang",
+              action: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.refresh_rounded),
+                    onPressed: () => setState(() {}),
+                    tooltip: "Refresh Data",
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: () => setState(() => _activeView = "registrasi_pemanen"),
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text("Tambah Pemanen"),
+                    style: ElevatedButton.styleFrom(backgroundColor: primaryBlue, foregroundColor: Colors.white),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: sortedAfds.map((afdKey) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 15, top: 10),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: primaryBlue.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(Icons.holiday_village_rounded, color: primaryBlue, size: 20),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              "Afdeling ${afdKey.replaceAll('AFD', '')}",
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: primaryBlue),
+                            ),
+                            const SizedBox(width: 10),
+                            Text("(${grouped[afdKey]!.length} Orang)", style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                          ],
+                        ),
+                      ),
+                      GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 4,
+                          crossAxisSpacing: 15,
+                          mainAxisSpacing: 15,
+                          mainAxisExtent: 70,
+                        ),
+                        itemCount: grouped[afdKey]!.length,
+                        itemBuilder: (context, index) {
+                          String name = grouped[afdKey]![index];
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.grey.withOpacity(0.15)),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.02),
+                                  blurRadius: 5,
+                                  offset: const Offset(0, 2)
+                                )
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 16,
+                                  backgroundColor: primaryBlue.withOpacity(0.1),
+                                  child: Text(
+                                    name.isNotEmpty ? name[0].toUpperCase() : "?", 
+                                    style: TextStyle(color: primaryBlue, fontWeight: FontWeight.bold, fontSize: 12)
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    name,
+                                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 30),
+                    ],
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _webViewDaftarBlok() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('blocks').snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(child: Text("Terjadi kesalahan: ${snapshot.error}"));
+        }
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        
+        final docs = snapshot.data?.docs ?? [];
+        Map<String, List<String>> grouped = {};
+        
+        if (docs.isNotEmpty) {
+          for (var doc in docs) {
+            var data = doc.data() as Map<String, dynamic>;
+            String kcs = (data['kcs'] ?? "Unknown").toString();
+            String blok = (data['blok'] ?? "-").toString();
+            
+            grouped.putIfAbsent(kcs, () => []).add(blok);
+          }
+          grouped.forEach((key, value) => value.sort());
+        }
+
+        if (grouped.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.grid_off_rounded, size: 80, color: Colors.grey[300]),
+                const SizedBox(height: 16),
+                const Text("Database Blok Kosong", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey)),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: () => setState(() => _activeView = "registrasi_blok"),
+                  icon: const Icon(Icons.add),
+                  label: const Text("Daftarkan Blok"),
+                  style: ElevatedButton.styleFrom(backgroundColor: primaryBlue, foregroundColor: Colors.white),
+                ),
+              ],
+            ),
+          );
+        }
+
+        var sortedKcs = grouped.keys.toList()..sort();
+
+        return ListView(
+          padding: const EdgeInsets.all(25),
+          children: [
+            modernCard(
+              title: "Daftar Master Blok",
+              subtitle: "Total Terdaftar: ${docs.length} Blok",
+              action: ElevatedButton.icon(
+                onPressed: () => setState(() => _activeView = "registrasi_blok"),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text("Tambah Blok"),
+                style: ElevatedButton.styleFrom(backgroundColor: primaryBlue, foregroundColor: Colors.white),
+              ),
+              child: Column(
+                children: sortedKcs.map((kcsKey) {
+                  return ExpansionTile(
+                    title: Text("KCS: $kcsKey", style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text("${grouped[kcsKey]!.length} Blok"),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: grouped[kcsKey]!.map((blok) => Chip(
+                            label: Text(blok),
+                            backgroundColor: bgGrey,
+                          )).toList(),
+                        ),
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _webViewRegistrasiPemanen() {
+    return ListView(
+      padding: const EdgeInsets.all(25),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 600),
+            child: modernCard(
+              title: "Pendaftaran Pemanen Baru",
+              subtitle: "Tambahkan data pemanen ke dalam database pusat",
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _webFormItem("Nama Lengkap Pemanen", _namaPemanenC, Icons.person_add_alt_1),
+                  const SizedBox(height: 25),
+                  const Text("Afdeling Penempatan", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.blueGrey)),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: bgGrey,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.withValues(alpha: 0.1)),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _selectedAfdPemanen,
+                        isExpanded: true,
+                        hint: const Text("Pilih Afdeling (AFD)"),
+                        items: afdelings.map((afd) => DropdownMenuItem(
+                          value: afd, 
+                          child: Text(afd, style: const TextStyle(fontSize: 14))
+                        )).toList(),
+                        onChanged: (v) => setState(() => _selectedAfdPemanen = v),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 40),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: _simpanPemanen,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryBlue,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.how_to_reg_rounded),
+                          SizedBox(width: 12),
+                          Text("DAFTARKAN PEMANEN", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  Center(
+                    child: TextButton(
+                      onPressed: () => setState(() => _activeView = "daftar_pemanen"),
+                      child: Text("Lihat Daftar Pemanen Terdaftar", style: TextStyle(color: accentBlue)),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Center(
+                    child: TextButton.icon(
+                      onPressed: _importDataPemanenDefault,
+                      icon: const Icon(Icons.download_rounded, size: 18),
+                      label: const Text("IMPORT PEMANEN DEFAULT"),
+                      style: TextButton.styleFrom(foregroundColor: Colors.grey),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _webViewLaporan() {
     return LaporanPanenPage(
       tanggal: DateTime.now().toString().split(" ")[0],
@@ -969,6 +1476,14 @@ class _DashboardAdminState extends State<DashboardAdmin> {
         return _webViewMap();
       case "data_panen":
         return _webViewDataPanen();
+      case "registrasi_pemanen":
+        return _webViewRegistrasiPemanen();
+      case "registrasi_blok":
+        return _webViewRegistrasiBlok();
+      case "daftar_blok":
+        return _webViewDaftarBlok();
+      case "daftar_pemanen":
+        return _webViewDaftarPemanen();
       case "profile":
         return _webViewProfile();
       case "sync":
@@ -985,6 +1500,8 @@ class _DashboardAdminState extends State<DashboardAdmin> {
         return _webViewUserMgmt();
       case "settings":
         return _webViewSettings();
+      case "reset_sistem":
+        return _webViewResetSistem();
       case "dashboard":
       default:
         return _webViewDashboard();
@@ -1056,6 +1573,12 @@ class _DashboardAdminState extends State<DashboardAdmin> {
                 _sidebarItem(Icons.assignment_rounded, "Data Panen", active: _activeView == "data_panen", onTap: () {
                   setState(() => _activeView = "data_panen");
                 }),
+                _sidebarItem(Icons.people_alt_rounded, "Daftar Pemanen", active: _activeView == "daftar_pemanen", onTap: () {
+                  setState(() => _activeView = "daftar_pemanen");
+                }),
+                _sidebarItem(Icons.grid_view_rounded, "Daftar Blok", active: _activeView == "daftar_blok", onTap: () {
+                  setState(() => _activeView = "daftar_blok");
+                }),
                 _sidebarItem(Icons.factory_rounded, "Data PKS", active: _activeView == "data_pks", onTap: () {
                   setState(() => _activeView = "data_pks");
                 }),
@@ -1079,6 +1602,10 @@ class _DashboardAdminState extends State<DashboardAdmin> {
                 }),
                 _sidebarItem(Icons.settings_rounded, "Pengaturan", active: _activeView == "settings", onTap: () {
                   setState(() => _activeView = "settings");
+                }),
+                const Divider(color: Colors.white10),
+                _sidebarItem(Icons.delete_sweep_rounded, "Reset Sistem", active: _activeView == "reset_sistem", onTap: () {
+                  setState(() => _activeView = "reset_sistem");
                 }),
               ],
             ),
@@ -1333,19 +1860,43 @@ class _DashboardAdminState extends State<DashboardAdmin> {
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: const [
-                          Text("Apa fungsi halaman ini untuk Admin?", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                          SizedBox(height: 8),
-                          Text(
+                        children: [
+                          const Text("Apa fungsi halaman ini untuk Admin?", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                          const SizedBox(height: 8),
+                          const Text(
                             "Sebagai Admin, Anda menggunakan halaman ini untuk memantau kelancaran pengiriman data dari lapangan. "
                             "Jika angka 'Menunggu Sinkronisasi' terlalu tinggi, ini menandakan petugas di lapangan (KCS/Pemanen) "
                             "mungkin mengalami kendala jaringan atau lupa menekan tombol sinkron di aplikasi mereka.",
                             style: TextStyle(color: Colors.blueGrey, fontSize: 13, height: 1.5),
                           ),
-                          SizedBox(height: 12),
-                          Text(
+                          const SizedBox(height: 12),
+                          const Text(
                             "⚠️ Catatan: Admin Web hanya bersifat memantau. Proses sinkronisasi fisik tetap dilakukan oleh petugas melalui aplikasi mobile.",
                             style: TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 20),
+                          const Divider(),
+                          const SizedBox(height: 10),
+                          const Text(
+                            "Tindakan Berbahaya",
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.red),
+                          ),
+                          const SizedBox(height: 10),
+                          const Text(
+                            "Jika sistem perlu dikosongkan untuk musim panen baru atau alasan teknis lainnya, Anda dapat melakukan Reset Data. "
+                            "Tindakan ini AKAN MENGHAPUS SEMUA DATA TRANSAKSI DAN MASTER dari database cloud secara permanen.",
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                          const SizedBox(height: 15),
+                          ElevatedButton.icon(
+                            onPressed: _confirmFullReset,
+                            icon: const Icon(Icons.warning_amber_rounded),
+                            label: const Text("RESET SISTEM (HAPUS SEMUA DATA)"),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                            ),
                           ),
                         ],
                       ),
@@ -1540,8 +2091,21 @@ class _DashboardAdminState extends State<DashboardAdmin> {
           return const Center(child: CircularProgressIndicator());
         }
         
+        // Tentukan batas sumbu X agar grafik terlihat proposional
+        double minXVal = selectedYear != null && selectedMonth == null ? 1 : (selectedMonth != null ? 1 : 6); // Jam mulai 6 pagi
+        double maxXVal = selectedYear != null && selectedMonth == null ? 12 : (selectedMonth != null ? 31 : 18); // Jam selesai 6 sore
+        
+        // Jika ada data di luar batas default, sesuaikan
+        for (var spot in chartSpots) {
+          if (spot.x < minXVal) minXVal = spot.x;
+          if (spot.x > maxXVal) maxXVal = spot.x;
+        }
+
         return LineChart(
           LineChartData(
+            minX: minXVal,
+            maxX: maxXVal,
+            minY: 0,
             lineTouchData: LineTouchData(
               touchTooltipData: LineTouchTooltipData(
                 getTooltipColor: (touchedSpot) => primaryBlue,
@@ -1618,8 +2182,6 @@ class _DashboardAdminState extends State<DashboardAdmin> {
                 ),
               ),
             ],
-            minX: minX,
-            maxX: maxX,
           ),
         );
       }
@@ -2066,31 +2628,36 @@ class _DashboardAdminState extends State<DashboardAdmin> {
   }
 
   Widget statusBadge(String status) {
-    // Di Web Admin, semua data yang masuk dianggap SYNCED/ONLINE
-    bool isWebAdmin = kIsWeb;
-    bool ok = status.toLowerCase() == "terkirim" || 
-              status.toLowerCase() == "online" || 
-              status.toLowerCase() == "synced" ||
-              isWebAdmin; // Jika Web, paksa jadi OK karena data sudah di server
-    
-    Color baseColor = ok ? primaryBlue : const Color(0xFFFFB300);
-    String displayStatus = isWebAdmin ? "SYNCED" : status.toUpperCase();
-    
+    String s = status.toUpperCase();
+    Color color = Colors.grey;
+    IconData icon = Icons.info_outline;
+
+    if (s == "PENDING") {
+      color = Colors.orange;
+      icon = Icons.access_time_rounded;
+    } else if (s == "ACC" || s == "SYNCED" || s == "TERKIRIM" || s == "ONLINE") {
+      color = Colors.green;
+      icon = Icons.check_circle_rounded;
+    } else if (s == "REJECT") {
+      color = Colors.red;
+      icon = Icons.cancel_rounded;
+    }
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: baseColor.withValues(alpha: 0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: baseColor.withValues(alpha: 0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(ok ? Icons.cloud_done : Icons.cloud_off_outlined, size: 12, color: baseColor),
-          const SizedBox(width: 6),
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
           Text(
-            displayStatus,
-            style: TextStyle(color: baseColor, fontSize: 11, fontWeight: FontWeight.bold)
+            s,
+            style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
           ),
         ],
       ),
@@ -2252,7 +2819,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
   }
 
   Widget _dataCard(Map<String, dynamic> item) {
-    String status = item['sync_status'] ?? "online";
+    String status = item['status'] ?? item['sync_status'] ?? "pending";
     String fotoStr = item['foto']?.toString() ?? "";
     
     return Container(
@@ -2625,6 +3192,271 @@ class _DashboardAdminState extends State<DashboardAdmin> {
   }
 
 
+  Widget _webViewResetSistem() {
+    return Center(
+      child: Container(
+        width: 600,
+        padding: const EdgeInsets.all(40),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20)],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.warning_amber_rounded, size: 80, color: Colors.red),
+            const SizedBox(height: 20),
+            const Text(
+              "Reset Seluruh Sistem",
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.red),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              "Tindakan ini akan menghapus SELURUH data di database pusat (Firestore) secara permanen, termasuk data panen, trip, PKS, dan daftar pemanen.",
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey, fontSize: 16),
+            ),
+            const SizedBox(height: 30),
+            if (isLoading)
+              const CircularProgressIndicator()
+            else
+              Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _confirmFullReset(),
+                      icon: const Icon(Icons.delete_forever),
+                      label: const Text("HAPUS SEMUA DATA SEKARANG"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 20),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  TextButton(
+                    onPressed: () => setState(() => _activeView = "dashboard"),
+                    child: const Text("Batal, Kembali ke Dashboard"),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmFullReset() async {
+    bool? confirm = await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Konfirmasi Terakhir"),
+        content: const Text("Apakah Anda yakin? Semua data akan hilang dan tidak bisa dikembalikan."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("BATAL")),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text("YA, HAPUS SEMUA"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _executeFullReset();
+    }
+  }
+
+  Widget _webViewRegistrasiBlok() {
+    return ListView(
+      padding: const EdgeInsets.all(25),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 600),
+            child: modernCard(
+              title: "Pendaftaran Blok Baru",
+              subtitle: "Tambahkan data blok ke dalam database pusat",
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _webFormItem("Nama/Kode Blok", _blokC, Icons.grid_on_rounded),
+                  const SizedBox(height: 25),
+                  const Text("KCS Pengelola", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.blueGrey)),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: bgGrey,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.withValues(alpha: 0.1)),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _selectedKcsBlok,
+                        isExpanded: true,
+                        hint: const Text("Pilih KCS"),
+                        items: kcsList.map((kcs) => DropdownMenuItem(
+                          value: kcs, 
+                          child: Text(kcs, style: const TextStyle(fontSize: 14))
+                        )).toList(),
+                        onChanged: (v) => setState(() => _selectedKcsBlok = v),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 40),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: _simpanBlok,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryBlue,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add_location_alt_rounded),
+                          SizedBox(width: 12),
+                          Text("DAFTARKAN BLOK", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+                  Center(
+                    child: TextButton(
+                      onPressed: () => setState(() => _activeView = "daftar_blok"),
+                      child: Text("Lihat Daftar Blok Terdaftar", style: TextStyle(color: accentBlue)),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Center(
+                    child: TextButton.icon(
+                      onPressed: _importDataBlokDefault,
+                      icon: const Icon(Icons.download_rounded, size: 18),
+                      label: const Text("IMPORT BLOK DEFAULT"),
+                      style: TextButton.styleFrom(foregroundColor: Colors.grey),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _simpanBlok() async {
+    if (_blokC.text.isEmpty || _selectedKcsBlok == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Nama Blok dan KCS harus diisi"), backgroundColor: Colors.orange)
+      );
+      return;
+    }
+
+    try {
+      await FirebaseFirestore.instance.collection('blocks').add({
+        'blok': _blokC.text.trim().toUpperCase(),
+        'kcs': _selectedKcsBlok,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      if (mounted) {
+        _blokC.clear();
+        setState(() => _selectedKcsBlok = null);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Blok berhasil didaftarkan ke sistem"),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+          )
+        );
+      }
+    } catch (e) {
+      debugPrint("Gagal daftar blok: $e");
+    }
+  }
+
+  Future<void> _importDataBlokDefault() async {
+    final Map<String, List<String>> defaultData = {
+      "KCS1": ["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B09", "B10"],
+      "KCS2": ["C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C10"],
+      "KCS3": ["D01", "D02", "D03", "D04", "D05", "D06", "D07", "D08", "D09", "D10"],
+    };
+
+    setState(() => isLoading = true);
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      final collection = FirebaseFirestore.instance.collection('blocks');
+
+      defaultData.forEach((kcs, bloks) {
+        for (var blok in bloks) {
+          var docRef = collection.doc();
+          batch.set(docRef, {
+            'blok': blok,
+            'kcs': kcs,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+      });
+
+      await batch.commit();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Berhasil mengimpor daftar blok default"), backgroundColor: Colors.green)
+        );
+      }
+    } catch (e) {
+      debugPrint("Error import blok: $e");
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  Future<void> _executeFullReset() async {
+    setState(() => isLoading = true);
+    try {
+      // Daftar koleksi yang akan dihapus
+      final collections = ['panen', 'trips', 'pks', 'harvesters', 'blocks'];
+      
+      for (var col in collections) {
+        var snapshots = await FirebaseFirestore.instance.collection(col).get();
+        var batch = FirebaseFirestore.instance.batch();
+        for (var doc in snapshots.docs) {
+          batch.delete(doc.reference);
+        }
+        await batch.commit();
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Sistem Berhasil Direset ke Awal!"), backgroundColor: Colors.green)
+        );
+        setState(() => _activeView = "dashboard");
+      }
+    } catch (e) {
+      debugPrint("Error reset: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Gagal reset: $e"), backgroundColor: Colors.red)
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
   Widget _sidebarItem(IconData icon, String title, {bool active = false, VoidCallback? onTap}) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 4),
@@ -2805,7 +3637,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
                       initialYear: selectedYear,
                       initialAfdeling: selectedAfdeling,
                     ))),
-                _mobileKpi("Nama Pemanen", "$jumlahPemanen", Icons.people, Colors.purple,
+                _mobileKpi("Jumlah Pemanen", "$jumlahPemanen", Icons.people, Colors.purple,
                     onTap: () => _showPemanenDialog()),
               ],
             ),

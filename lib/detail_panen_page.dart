@@ -128,7 +128,7 @@ class DetailPanenPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    String status = data['status'] ?? 'pending';
+    String status = data['status'] ?? data['sync_status'] ?? 'pending';
     String imageUrl = _getImageUrl(data['foto']);
 
     // Tentukan apakah dalam mode Web untuk mengecilkan ukuran card

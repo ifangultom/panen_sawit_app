@@ -37,11 +37,8 @@ class _InputPanenPageState extends State<InputPanenPage>
   String selectedKCS  = "KCS1";
   String? selectedBlok;
 
-  Map<String, List<String>> blokKCS = {
-    "KCS1": ["A","B","C","D","E","F","G","H"],
-    "KCS2": ["I","J","K","L","M","N","O"],
-    "KCS3": ["P","Q","R","S","T","U"],
-  };
+  Map<String, List<String>> blokKCS = {};
+  bool _isLoadingBlocks = true;
 
   final tanggal    = TextEditingController();
   final pemanen    = TextEditingController();
@@ -72,40 +69,60 @@ class _InputPanenPageState extends State<InputPanenPage>
     _fadeIn = CurvedAnimation(parent: _animC, curve: Curves.easeOut);
     _animC.forward();
 
-    selectedBlok = blokKCS[selectedKCS]!.first;
+    _loadBlocks();
+  }
 
-    if (widget.data != null) {
-      final d = widget.data!;
-      tanggal.text    = d['tanggal']         ?? "";
-      pemanen.text    = d['pemanen']         ?? "";
-      tph.text        = d['tph']             ?? "";
-      tahunTanam.text = (d['thn_tanam'] ?? d['tahun_tanam']) ?? "";
-      brondolan.text  = d['brondolan']       ?? "";
-      mentah.text     = d['mentah']          ?? "";
-      matang.text     = d['matang']          ?? "";
-      brondKetek.text = d['brond_ketek']     ?? "";
-      tbsKetek.text   = d['tbs_ketek']       ?? "";
-      tangkai.text    = d['tangkai_panjang'] ?? "";
-      buahCacah.text  = d['buah_cacah']      ?? "";
-      tangkos.text    = d['tangkos']         ?? "";
-      buahSakit.text  = d['buah_sakit']      ?? "";
-      catatan.text    = d['catatan']         ?? "";
-      latitude.text   = d['latitude']        ?? "";
-      longitude.text  = d['longitude']       ?? "";
-      trackingData    = d['tracking']        ?? "";
+  Future<void> _loadBlocks() async {
+    final blocks = await DatabaseHelper.instance.getAllBlocksGroupedByKCS();
+    
+    if (!mounted) return;
+    
+    setState(() {
+      blokKCS = blocks;
+      _isLoadingBlocks = false;
 
-      String? blokData = d['blok'];
-      if (blokData != null) {
-        blokKCS.forEach((kcs, list) {
-          if (list.contains(blokData)) selectedKCS = kcs;
-        });
-        selectedBlok = blokData;
+      // Inisialisasi default jika blokKCS tidak kosong
+      if (blokKCS.isNotEmpty) {
+        if (!blokKCS.containsKey(selectedKCS)) {
+          selectedKCS = blokKCS.keys.first;
+        }
+        selectedBlok = blokKCS[selectedKCS]!.isNotEmpty ? blokKCS[selectedKCS]!.first : null;
       }
-      if (!blokKCS[selectedKCS]!.contains(selectedBlok)) {
-        selectedBlok = blokKCS[selectedKCS]!.first;
+
+      // Overwrite dengan data jika mode edit
+      if (widget.data != null) {
+        final d = widget.data!;
+        tanggal.text    = d['tanggal']         ?? "";
+        pemanen.text    = d['pemanen']         ?? "";
+        tph.text        = d['tph']             ?? "";
+        tahunTanam.text = (d['thn_tanam'] ?? d['tahun_tanam']) ?? "";
+        brondolan.text  = d['brondolan']       ?? "";
+        mentah.text     = d['mentah']          ?? "";
+        matang.text     = d['matang']          ?? "";
+        brondKetek.text = d['brond_ketek']     ?? "";
+        tbsKetek.text   = d['tbs_ketek']       ?? "";
+        tangkai.text    = d['tangkai_panjang'] ?? "";
+        buahCacah.text  = d['buah_cacah']      ?? "";
+        tangkos.text    = d['tangkos']         ?? "";
+        buahSakit.text  = d['buah_sakit']      ?? "";
+        catatan.text    = d['catatan']         ?? "";
+        latitude.text   = d['latitude']        ?? "";
+        longitude.text  = d['longitude']       ?? "";
+        trackingData    = d['tracking']        ?? "";
+
+        String? blokData = d['blok'];
+        if (blokData != null) {
+          blokKCS.forEach((kcs, list) {
+            if (list.contains(blokData)) selectedKCS = kcs;
+          });
+          selectedBlok = blokData;
+        }
+        if (blokKCS.containsKey(selectedKCS) && !blokKCS[selectedKCS]!.contains(selectedBlok)) {
+          selectedBlok = blokKCS[selectedKCS]!.isNotEmpty ? blokKCS[selectedKCS]!.first : null;
+        }
+        if (d['foto'] != "") imageFile = File(d['foto']);
       }
-      if (d['foto'] != "") imageFile = File(d['foto']);
-    }
+    });
   }
 
   @override
@@ -183,15 +200,27 @@ Kota: Kota Medan
     if (imageFile != null) {
       final bytes = await imageFile!.readAsBytes();
       final base64String = base64Encode(bytes);
-      base64Foto = "data:image/jpeg;base64,$base64String"; // Tambahkan header agar Web mengenalinya
+      base64Foto = "data:image/jpeg;base64,$base64String"; 
     }
 
     final kcsToAfd    = {"KCS1": "AFD1", "KCS2": "AFD2", "KCS3": "AFD3"};
     final kcsToMandor = {"KCS1": "mandor_afd1", "KCS2": "mandor_afd2", "KCS3": "mandor_afd3"};
+    
+    // Ambil waktu sekarang untuk jam yang presisi
+    DateTime now = DateTime.now();
+    String waktuLengkap = now.toIso8601String(); 
 
-    // 2. Data untuk Firestore (Foto = Base64 agar Web langsung muncul)
+    // Jika user pilih tanggal, kita ambil YYYY-MM-DD-nya saja lalu gabung dengan jam sekarang
+    String tglInput = tanggal.text.isNotEmpty ? tanggal.text.replaceAll('/', '-') : waktuLengkap.split('T')[0];
+    if (tglInput.contains(' ')) tglInput = tglInput.split(' ')[0];
+    
+    // Format: YYYY-MM-DDTHH:mm:ss...
+    String tanggalFinal = "${tglInput}T${now.hour.toString().padLeft(2,'0')}:${now.minute.toString().padLeft(2,'0')}:${now.second.toString().padLeft(2,'0')}";
+
+    // 2. Data untuk Firestore
     final dataFirestore = {
-      'tanggal': tanggal.text.isNotEmpty ? tanggal.text.replaceAll('/', '-') : DateTime.now().toIso8601String().split('T')[0],
+      'tanggal': tanggalFinal,
+      'waktu': waktuLengkap,
       'pemanen': pemanen.text,
       'blok': selectedBlok ?? "",
       'tph': tph.text,
@@ -201,7 +230,7 @@ Kota: Kota Medan
       'mentah': mentah.text,
       'matang': matang.text,
       'catatan': catatan.text,
-      'foto': base64Foto, // Simpan teks Base64 untuk Web
+      'foto': base64Foto,
       'latitude': latitude.text,
       'longitude': longitude.text,
       'tracking': trackingData,
@@ -416,9 +445,21 @@ Kota: Kota Medan
               ),
             ])),
 
-            // ── KCS + PEMANEN ─────────────────────────────────────────────
+            // ── AFD + PEMANEN ─────────────────────────────────────────────
             _card(Column(children: [
-              _sectionLabel("KCS & PEMANEN", Icons.group_rounded),
+              _sectionLabel("AFD & PEMANEN", Icons.group_rounded),
+              if (!_isLoadingBlocks && blokKCS.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  margin: const EdgeInsets.only(bottom: 10),
+                  decoration: BoxDecoration(color: Colors.red[50], borderRadius: BorderRadius.circular(10)),
+                  child: Row(children: [
+                    const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text("Data Blok Kosong. Silakan sinkron master data di menu Sinkronisasi.", 
+                      style: TextStyle(color: Colors.red[900], fontSize: 11, fontWeight: FontWeight.normal))),
+                  ]),
+                ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 decoration: BoxDecoration(
@@ -426,28 +467,73 @@ Kota: Kota Medan
                     borderRadius: BorderRadius.circular(12)),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButtonFormField<String>(
-                    value: ["KCS1","KCS2","KCS3"].contains(selectedKCS) ? selectedKCS : "KCS1",
+                    value: blokKCS.containsKey(selectedKCS) ? selectedKCS : (blokKCS.isNotEmpty ? blokKCS.keys.first : null),
                     decoration: const InputDecoration(border: InputBorder.none),
                     icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _primaryBlue),
                     style: const TextStyle(color: _textGelap, fontWeight: FontWeight.w600, fontSize: 14),
                     dropdownColor: Colors.white,
-                    items: const [
-                      DropdownMenuItem(value: "KCS1", child: Text("KCS 1")),
-                      DropdownMenuItem(value: "KCS2", child: Text("KCS 2")),
-                      DropdownMenuItem(value: "KCS3", child: Text("KCS 3")),
-                    ],
+                    hint: const Text("Pilih AFD", style: TextStyle(color: _textAbu, fontSize: 13, fontWeight: FontWeight.normal)),
+                    items: blokKCS.keys.map((kcs) {
+                      return DropdownMenuItem(value: kcs, child: Text(kcs.replaceAll('KCS', 'AFD ')));
+                    }).toList(),
                     onChanged: (v) => setState(() {
                       selectedKCS  = v!;
-                      selectedBlok = blokKCS[selectedKCS]!.first;
+                      selectedBlok = blokKCS[selectedKCS]!.isNotEmpty ? blokKCS[selectedKCS]!.first : null;
+                      pemanen.text = ""; // Reset nama pemanen saat pindah KCS
                     }),
                   ),
                 ),
               ),
               const SizedBox(height: 10),
-              TextField(
-                controller: pemanen,
-                style: const TextStyle(fontSize: 14, color: _textGelap),
-                decoration: _dec("Nama Pemanen", icon: Icons.person_rounded),
+              FutureBuilder<List<String>>(
+                future: DatabaseHelper.instance.getHarvestersByAfdeling(selectedKCS.replaceAll('KCS', 'AFD')),
+                builder: (context, localSnapshot) {
+                  return StreamBuilder<QuerySnapshot>(
+                    stream: FirebaseFirestore.instance
+                        .collection('harvesters')
+                        .where('afdeling', isEqualTo: selectedKCS.replaceAll('KCS', 'AFD'))
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      List<String> listPemanen = localSnapshot.data ?? [];
+                      
+                      if (snapshot.hasData) {
+                        listPemanen = snapshot.data!.docs
+                            .map((doc) => (doc.data() as Map<String, dynamic>)['nama'] as String)
+                            .toList();
+                        // Sort alphabetical
+                        listPemanen.sort();
+                      }
+
+                      return Container(
+                        padding: const EdgeInsets.only(right: 14),
+                        decoration: BoxDecoration(
+                            color: _lightBlue,
+                            borderRadius: BorderRadius.circular(12)),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButtonFormField<String>(
+                            value: listPemanen.contains(pemanen.text) ? pemanen.text : null,
+                            decoration: const InputDecoration(
+                              border: InputBorder.none,
+                              prefixIcon: Icon(Icons.person_rounded, size: 18, color: _accentBlue),
+                            ),
+                            icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _primaryBlue),
+                            style: const TextStyle(color: _textGelap, fontWeight: FontWeight.w600, fontSize: 14),
+                            dropdownColor: Colors.white,
+                            hint: Text(
+                              snapshot.connectionState == ConnectionState.waiting && listPemanen.isEmpty
+                                ? "Memuat data..." 
+                                : "Pilih Nama Pemanen", 
+                              style: const TextStyle(color: _textAbu, fontSize: 13, fontWeight: FontWeight.normal)
+                            ),
+                            items: listPemanen.map((p) =>
+                                DropdownMenuItem<String>(value: p, child: Text(p))).toList(),
+                            onChanged: (v) => setState(() => pemanen.text = v!),
+                          ),
+                        ),
+                      );
+                    }
+                  );
+                }
               ),
             ])),
 
@@ -462,13 +548,13 @@ Kota: Kota Medan
                         color: _lightBlue, borderRadius: BorderRadius.circular(12)),
                     child: DropdownButtonHideUnderline(
                       child: DropdownButtonFormField<String>(
-                        value: blokKCS[selectedKCS]!.contains(selectedBlok) ? selectedBlok : null,
+                        value: (blokKCS.containsKey(selectedKCS) && blokKCS[selectedKCS]!.contains(selectedBlok)) ? selectedBlok : null,
                         decoration: const InputDecoration(border: InputBorder.none),
                         icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _primaryBlue),
                         style: const TextStyle(color: _textGelap, fontWeight: FontWeight.w600, fontSize: 14),
                         dropdownColor: Colors.white,
-                        hint: const Text("Blok"),
-                        items: blokKCS[selectedKCS]!.map((b) =>
+                        hint: Text(_isLoadingBlocks ? "Memuat..." : "Blok"),
+                        items: (blokKCS[selectedKCS] ?? []).map((b) =>
                             DropdownMenuItem<String>(value: b, child: Text("Blok $b"))).toList(),
                         onChanged: (v) => setState(() => selectedBlok = v!),
                       ),

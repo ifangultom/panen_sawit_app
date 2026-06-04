@@ -363,6 +363,13 @@ class _DashboardMandorState extends State<DashboardMandor> with SingleTickerProv
                     loadUser();
                   },
                 ),
+                _menuCard(
+                  icon: Icons.delete_forever_rounded,
+                  label: "Reset Data",
+                  color1: Colors.red.shade900,
+                  color2: Colors.red.shade400,
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ResetDataPage())),
+                ),
               ]),
             ),
           ),

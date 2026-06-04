@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 
+
 // 🔥 IMPORT PAGE
 import 'profile_page.dart';
 import 'input_panen.dart';
@@ -67,6 +68,8 @@ class _DashboardKCSState extends State<DashboardKCS> with SingleTickerProviderSt
     try {
       // Hanya ambil data dari firebase jika ada sinyal, agar tidak macet di layar awal
       await DatabaseHelper.instance.ambilDataDariFirebase().timeout(const Duration(seconds: 5));
+      await DatabaseHelper.instance.syncHarvesters().timeout(const Duration(seconds: 5));
+      await DatabaseHelper.instance.syncBlocks().timeout(const Duration(seconds: 5));
     } catch (e) {
       debugPrint("Gagal sinkron otomatis (offline): $e");
     }
@@ -338,6 +341,13 @@ class _DashboardKCSState extends State<DashboardKCS> with SingleTickerProviderSt
                   color1: const Color(0xFF880E4F),
                   color2: const Color(0xFFEC407A),
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SinkronisasiPage())),
+                ),
+                _menuCard(
+                  icon: Icons.delete_forever_rounded,
+                  label: "Reset Data",
+                  color1: Colors.red.shade900,
+                  color2: Colors.red.shade400,
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ResetDataPage())),
                 ),
               ]),
             ),

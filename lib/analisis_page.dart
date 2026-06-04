@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AnalisisProduksiPage extends StatefulWidget {
   final bool isWebView;
-  final List<Map<String, dynamic>> laporanPanen; // Data asli dari dashboard
+  final List<Map<String, dynamic>> laporanPanen; 
 
   const AnalisisProduksiPage({
     super.key, 
@@ -20,7 +21,6 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
   final Color accentBlue = const Color(0xFF1976D2);
   final Color bgGrey = const Color(0xFFF4F7F6);
 
-  // Variabel Hasil Olah Data
   Map<String, double> dataBlok = {};
   Map<String, double> dataKualitas = {"Matang": 0, "Mentah": 0, "Brondolan": 0};
   double totalJanjang = 0;
@@ -41,106 +41,193 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
     _prosesDataAsli();
   }
 
+  DateTime? _parseDate(dynamic dateObj) {
+    if (dateObj == null) return null;
+    if (dateObj is Timestamp) return dateObj.toDate();
+    if (dateObj is String) {
+      try { return DateTime.parse(dateObj); } catch (_) {
+        try {
+          final parts = dateObj.split(' ');
+          if (parts.length >= 3) {
+            int day = int.parse(parts[0]);
+            int year = int.parse(parts[2]);
+            const monthsMap = {
+              'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'Mei': 5, 'Jun': 6,
+              'Jul': 7, 'Ags': 8, 'Sep': 9, 'Okt': 10, 'Nov': 11, 'Des': 12
+            };
+            int month = monthsMap[parts[1]] ?? 1;
+            return DateTime(year, month, day);
+          }
+        } catch (_) {}
+      }
+    }
+    return null;
+  }
+
   void _prosesDataAsli() {
-    // Reset data
     dataBlok = {};
     dataKualitas = {"Matang": 0, "Mentah": 0, "Brondolan": 0};
     totalJanjang = 0;
 
-    // Define Blok per Afdeling (Strict Mapping)
     final Map<String, List<String>> afdelingToBloks = {
       "AFD1": ["A", "B", "C", "D", "E", "F", "G", "H"],
       "AFD2": ["I", "J", "K", "L", "M", "N", "O"],
       "AFD3": ["P", "Q", "R", "S", "T", "U"],
     };
 
-    // 1. Inisialisasi blok sesuai filter Afdeling
     if (selectedAfdeling != null) {
-      String afdKey = selectedAfdeling!.replaceAll(" ", "").toUpperCase();
+      String afdKey = selectedAfdeling!.toUpperCase();
       if (afdelingToBloks.containsKey(afdKey)) {
-        for (var b in afdelingToBloks[afdKey]!) {
-          dataBlok["BLOK $b"] = 0;
-        }
+        for (var b in afdelingToBloks[afdKey]!) { dataBlok["BLOK $b"] = 0; }
       }
     } else {
-      // Jika semua afdeling, tampilkan semua blok dari semua afdeling
       for (var afdKey in afdelingToBloks.keys) {
-        for (var b in afdelingToBloks[afdKey]!) {
-          dataBlok["BLOK $b"] = 0;
-        }
+        for (var b in afdelingToBloks[afdKey]!) { dataBlok["BLOK $b"] = 0; }
       }
     }
 
     for (var item in widget.laporanPanen) {
-      // 2. Filter Afdeling
-      String itemAfd = (item['afdeling'] ?? "").toString().replaceAll(" ", "").toUpperCase();
-      if (selectedAfdeling != null) {
-        String selAfd = selectedAfdeling!.replaceAll(" ", "").toUpperCase();
-        if (itemAfd != selAfd) continue;
+      String status = (item['status'] ?? item['sync_status'] ?? "").toString().toUpperCase();
+      if (status != "ACC") continue;
+
+      String itemAfd = (item['afdeling'] ?? "").toString().toUpperCase();
+      if (itemAfd.isEmpty) {
+        String kcs = item['kcs']?.toString() ?? "";
+        if (kcs == "KCS1") itemAfd = "AFD1";
+        else if (kcs == "KCS2") itemAfd = "AFD2";
+        else if (kcs == "KCS3") itemAfd = "AFD3";
       }
 
-      // 3. Filter Waktu
-      if (item['tanggal'] != null) {
-        try {
-          DateTime tgl = DateTime.parse(item['tanggal'].toString());
-          if (selectedMonth != null && tgl.month != selectedMonth) continue;
-          if (selectedYear != null && tgl.year != selectedYear) continue;
-        } catch (_) {}
+      if (selectedAfdeling != null && itemAfd != selectedAfdeling!.toUpperCase()) continue;
+
+      DateTime? tgl = _parseDate(item['tanggal'] ?? item['waktu']);
+      if (tgl != null) {
+        if (selectedMonth != null && tgl.month != selectedMonth) continue;
+        if (selectedYear != null && tgl.year != selectedYear) continue;
       }
 
-      // 4. Hitung Produksi per Blok (Hanya jika blok tersebut milik afdeling-nya)
       String blokRaw = item['blok']?.toString().toUpperCase() ?? "";
       if (blokRaw.isNotEmpty) {
         String blokName = blokRaw.startsWith("BLOK ") ? blokRaw : "BLOK $blokRaw";
+        double matang = double.tryParse(item['matang']?.toString() ?? "0") ?? 0;
+        double mentah = double.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
+        double janjang = double.tryParse(item['janjang']?.toString() ?? "") ?? (matang + mentah);
         
         if (dataBlok.containsKey(blokName)) {
-           double janjang = double.tryParse(item['janjang']?.toString() ?? "0") ?? 
-                          (double.tryParse(item['matang']?.toString() ?? "0") ?? 0) + 
-                          (double.tryParse(item['mentah']?.toString() ?? "0") ?? 0);
-          
           dataBlok[blokName] = (dataBlok[blokName] ?? 0) + janjang;
           totalJanjang += janjang;
         }
       }
 
-      // 5. Hitung Kualitas
-      int matang = int.tryParse(item['matang']?.toString() ?? "0") ?? 0;
-      int mentah = int.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
-      double brondolan = double.tryParse(item['brondolan']?.toString() ?? "0") ?? 0;
-
-      dataKualitas["Matang"] = (dataKualitas["Matang"] ?? 0) + matang;
-      dataKualitas["Mentah"] = (dataKualitas["Mentah"] ?? 0) + mentah;
-      dataKualitas["Brondolan"] = (dataKualitas["Brondolan"] ?? 0) + brondolan;
+      dataKualitas["Matang"] = (dataKualitas["Matang"] ?? 0) + (double.tryParse(item['matang']?.toString() ?? "0") ?? 0);
+      dataKualitas["Mentah"] = (dataKualitas["Mentah"] ?? 0) + (double.tryParse(item['mentah']?.toString() ?? "0") ?? 0);
+      dataKualitas["Brondolan"] = (dataKualitas["Brondolan"] ?? 0) + (double.tryParse(item['brondolan']?.toString() ?? "0") ?? 0);
     }
   }
 
-  // Tambahan untuk menghitung total per Afdeling (untuk Web Dashboard)
   Map<String, double> _hitungTotalPerAfdeling() {
     Map<String, double> totals = {"AFD1": 0, "AFD2": 0, "AFD3": 0};
-    final Map<String, List<String>> mapping = {
-      "AFD1": ["A", "B", "C", "D", "E", "F", "G", "H"],
-      "AFD2": ["I", "J", "K", "L", "M", "N", "O"],
-      "AFD3": ["P", "Q", "R", "S", "T", "U"],
-    };
-
     for (var item in widget.laporanPanen) {
-      String itemAfd = (item['afdeling'] ?? "").toString().replaceAll(" ", "").toUpperCase();
-      String blokRaw = item['blok']?.toString().toUpperCase() ?? "";
+      if ((item['status'] ?? item['sync_status'] ?? "").toString().toUpperCase() != "ACC") continue;
+
+      DateTime? tgl = _parseDate(item['tanggal'] ?? item['waktu']);
+      if (tgl != null) {
+        if (selectedMonth != null && tgl.month != selectedMonth) continue;
+        if (selectedYear != null && tgl.year != selectedYear) continue;
+      }
+
+      String itemAfd = (item['afdeling'] ?? "").toString().toUpperCase();
+      if (itemAfd.isEmpty) {
+        String kcs = item['kcs']?.toString() ?? "";
+        if (kcs == "KCS1") itemAfd = "AFD1";
+        else if (kcs == "KCS2") itemAfd = "AFD2";
+        else if (kcs == "KCS3") itemAfd = "AFD3";
+      }
       
-      if (mapping.containsKey(itemAfd) && mapping[itemAfd]!.contains(blokRaw.replaceAll("BLOK ", ""))) {
-        double janjang = double.tryParse(item['janjang']?.toString() ?? "0") ?? 
-                        (double.tryParse(item['matang']?.toString() ?? "0") ?? 0) + 
-                        (double.tryParse(item['mentah']?.toString() ?? "0") ?? 0);
-        totals[itemAfd] = (totals[itemAfd] ?? 0) + janjang;
+      if (totals.containsKey(itemAfd)) {
+        double matang = double.tryParse(item['matang']?.toString() ?? "0") ?? 0;
+        double mentah = double.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
+        totals[itemAfd] = (totals[itemAfd] ?? 0) + (matang + mentah);
       }
     }
     return totals;
+  }
+
+  void _showAfdDetail(String afdName) {
+    // Filter data khusus afdeling ini
+    Map<String, double> blockDetail = {};
+    for (var item in widget.laporanPanen) {
+      if ((item['status'] ?? item['sync_status'] ?? "").toString().toUpperCase() != "ACC") continue;
+      
+      DateTime? tgl = _parseDate(item['tanggal'] ?? item['waktu']);
+      if (tgl != null) {
+        if (selectedMonth != null && tgl.month != selectedMonth) continue;
+        if (selectedYear != null && tgl.year != selectedYear) continue;
+      }
+
+      String itemAfd = (item['afdeling'] ?? "").toString().toUpperCase();
+      if (itemAfd.isEmpty) {
+        String kcs = item['kcs']?.toString() ?? "";
+        if (kcs == "KCS1") itemAfd = "AFD1";
+        else if (kcs == "KCS2") itemAfd = "AFD2";
+        else if (kcs == "KCS3") itemAfd = "AFD3";
+      }
+
+      if (itemAfd == afdName) {
+        String blok = (item['blok'] ?? "-").toString().toUpperCase();
+        if (!blok.startsWith("BLOK ")) blok = "BLOK $blok";
+        double matang = double.tryParse(item['matang']?.toString() ?? "0") ?? 0;
+        double mentah = double.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
+        blockDetail[blok] = (blockDetail[blok] ?? 0) + (matang + mentah);
+      }
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(Icons.domain, color: primaryBlue),
+            const SizedBox(width: 10),
+            Text("Detail Produksi $afdName"),
+          ],
+        ),
+        content: SizedBox(
+          width: 400,
+          child: blockDetail.isEmpty 
+            ? const Padding(padding: EdgeInsets.all(20), child: Text("Tidak ada data produksi untuk filter ini."))
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Divider(),
+                  ...blockDetail.entries.map((e) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(e.key, style: const TextStyle(fontWeight: FontWeight.bold)),
+                        Text("${e.value.toStringAsFixed(0)} Janjang", style: TextStyle(color: accentBlue, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  )).toList(),
+                ],
+              ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Tutup")),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     _prosesDataAsli(); 
     final afdTotals = _hitungTotalPerAfdeling();
+
+    double totalJjgHitung = dataKualitas["Matang"]! + dataKualitas["Mentah"]!;
+    double nilaiEfisiensi = totalJjgHitung > 0 ? (dataKualitas["Matang"]! / totalJjgHitung * 100) : 0;
 
     Widget content = SingleChildScrollView(
       padding: const EdgeInsets.all(24.0),
@@ -155,7 +242,7 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text("Analisis Produksi & Kualitas", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                    const Text("Monitoring per Afdeling dan Blok", style: TextStyle(fontSize: 14, color: Colors.grey)),
+                    const Text("Monitoring per Afdeling dan Blok (Data Ter-ACC)", style: TextStyle(fontSize: 14, color: Colors.grey)),
                   ],
                 ),
                 Row(
@@ -168,48 +255,34 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
               ],
             ),
             const SizedBox(height: 25),
-
-            // --- WEB ONLY: Afdeling Summary Row ---
             Row(
               children: [
-                _afdSummaryCard("AFDELING 1", "${afdTotals['AFD1']?.toStringAsFixed(0)}", "Blok A - H", const Color(0xFF0D47A1), Icons.domain),
+                _afdSummaryCard("AFDELING 1", "${afdTotals['AFD1']?.toStringAsFixed(0)}", "Blok A - H", const Color(0xFF0D47A1), Icons.domain, () => _showAfdDetail("AFD1")),
                 const SizedBox(width: 16),
-                _afdSummaryCard("AFDELING 2", "${afdTotals['AFD2']?.toStringAsFixed(0)}", "Blok I - O", const Color(0xFF1565C0), Icons.domain),
+                _afdSummaryCard("AFDELING 2", "${afdTotals['AFD2']?.toStringAsFixed(0)}", "Blok I - O", const Color(0xFF1565C0), Icons.domain, () => _showAfdDetail("AFD2")),
                 const SizedBox(width: 16),
-                _afdSummaryCard("AFDELING 3", "${afdTotals['AFD3']?.toStringAsFixed(0)}", "Blok P - U", const Color(0xFF1976D2), Icons.domain),
+                _afdSummaryCard("AFDELING 3", "${afdTotals['AFD3']?.toStringAsFixed(0)}", "Blok P - U", const Color(0xFF1976D2), Icons.domain, () => _showAfdDetail("AFD3")),
               ],
             ),
             const SizedBox(height: 24),
-          ],
-          
-          if (!widget.isWebView) ...[
-             _buildTimeFilters(),
-             const SizedBox(height: 10),
-             _buildAfdFilter(),
-             const SizedBox(height: 15),
           ],
           
           Row(
             children: [
               _metricCard("Total Janjang", totalJanjang.toStringAsFixed(0), "Janjang", Icons.eco, primaryBlue),
               _metricCard("Blok Aktif", dataBlok.length.toString(), "Blok", Icons.grid_view_rounded, accentBlue),
-              _metricCard("Efisiensi", "94", "%", Icons.speed_rounded, const Color(0xFFFB8C00)),
+              _metricCard("Efisiensi", nilaiEfisiensi.toStringAsFixed(1), "%", Icons.speed_rounded, const Color(0xFFFB8C00)),
             ],
           ),
           const SizedBox(height: 25),
-
-          _buildBestWorstBlocks(),
-          const SizedBox(height: 25),
-
+          
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 flex: 2,
                 child: _buildChartContainer(
-                  title: selectedAfdeling == null 
-                      ? "Produksi per Blok (A - U)" 
-                      : "Produksi per Blok ${selectedAfdeling == 'AFD1' ? '(A - H)' : selectedAfdeling == 'AFD2' ? '(I - O)' : '(P - U)'}",
+                  title: "Produksi per Blok",
                   subtitle: "Visualisasi kontribusi janjang tiap blok",
                   child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
@@ -255,94 +328,41 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
     );
   }
 
-  Widget _afdSummaryCard(String title, String value, String blocks, Color color, IconData icon) {
+  Widget _afdSummaryCard(String title, String value, String blocks, Color color, IconData icon, VoidCallback onTap) {
     return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [color, color.withOpacity(0.8)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [BoxShadow(color: color.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 6))],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(title, style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
-                Icon(icon, color: Colors.white30, size: 24),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(value, style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900)),
-            const SizedBox(height: 4),
-            Text(blocks, style: const TextStyle(color: Colors.white60, fontSize: 13, fontWeight: FontWeight.w500)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBestWorstBlocks() {
-    if (dataBlok.isEmpty) return const SizedBox();
-
-    var sortedEntries = dataBlok.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-
-    var best = sortedEntries.first;
-    var worst = sortedEntries.last;
-
-    return Row(
-      children: [
-        Expanded(
-          child: _summaryBlockCard(
-            "Blok Produksi Tertinggi", 
-            best.key, 
-            "${best.value.toStringAsFixed(0)} Janjang", 
-            Icons.trending_up_rounded, 
-            const Color(0xFF0D47A1)
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [color, color.withOpacity(0.8)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [BoxShadow(color: color.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 6))],
           ),
-        ),
-        const SizedBox(width: 20),
-        Expanded(
-          child: _summaryBlockCard(
-            "Blok Produksi Terendah", 
-            worst.key, 
-            "${worst.value.toStringAsFixed(0)} Janjang", 
-            Icons.trending_down_rounded, 
-            const Color(0xFFD32F2F)
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _summaryBlockCard(String title, String block, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white, 
-        borderRadius: BorderRadius.circular(16), 
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)]
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12), 
-            decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)), 
-            child: Icon(icon, color: color, size: 28)
-          ),
-          const SizedBox(width: 15),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start, 
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-              Text(block, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: color)),
-            ]
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(title, style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+                  const Icon(Icons.info_outline, color: Colors.white30, size: 20),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(value, style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(blocks, style: const TextStyle(color: Colors.white60, fontSize: 13, fontWeight: FontWeight.w500)),
+                  const Text("Klik Rincian", style: TextStyle(color: Colors.white30, fontSize: 10)),
+                ],
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -351,20 +371,13 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Filter Bulan
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.withOpacity(0.2)),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5)],
-          ),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.withOpacity(0.2))),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<int?>(
               value: selectedMonth,
               hint: const Text("Bulan"),
-              icon: const Icon(Icons.calendar_month, color: Colors.blue, size: 20),
               items: [
                 const DropdownMenuItem(value: null, child: Text("Semua Bulan")),
                 ...List.generate(months.length, (i) => DropdownMenuItem(value: i + 1, child: Text(months[i]))),
@@ -374,20 +387,13 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
           ),
         ),
         const SizedBox(width: 8),
-        // Filter Tahun
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.withOpacity(0.2)),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5)],
-          ),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.withOpacity(0.2))),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<int?>(
               value: selectedYear,
               hint: const Text("Tahun"),
-              icon: const Icon(Icons.event_note, color: Colors.orange, size: 20),
               items: [
                 const DropdownMenuItem(value: null, child: Text("Semua Tahun")),
                 ...years.map((y) => DropdownMenuItem(value: y, child: Text(y.toString()))),
@@ -403,26 +409,16 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
   Widget _buildAfdFilter() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.withOpacity(0.2)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5)],
-      ),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.withOpacity(0.2))),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String?>(
           value: selectedAfdeling,
-          hint: const Text("Pilih Afdeling"),
-          icon: Icon(Icons.filter_list_alt, color: primaryBlue),
+          hint: const Text("Semua Afdeling"),
           items: [
             const DropdownMenuItem(value: null, child: Text("Semua Afdeling")),
             ...afdelings.map((afd) => DropdownMenuItem(value: afd, child: Text(afd))),
           ],
-          onChanged: (val) {
-            setState(() {
-              selectedAfdeling = val;
-            });
-          },
+          onChanged: (val) => setState(() => selectedAfdeling = val),
         ),
       ),
     );
@@ -450,6 +446,7 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
 
   Widget _buildChartContainer({required String title, required String subtitle, required Widget child}) {
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)]),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -475,47 +472,28 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
   }
 
   BarChartData _barChartData() {
-    // Sort blok A-Z
     var sortedKeys = dataBlok.keys.toList()..sort();
-    
     return BarChartData(
       gridData: const FlGridData(show: false),
       titlesData: FlTitlesData(
         show: true,
-        bottomTitles: AxisTitles(
-          sideTitles: SideTitles(
-            showTitles: true,
-            getTitlesWidget: (value, meta) {
-              int i = value.toInt();
-              if (i >= 0 && i < sortedKeys.length) {
-                return Text(sortedKeys[i].replaceAll("BLOK ", ""), style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold));
-              }
-              return const Text("");
-            },
-          ),
-        ),
-        leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-      ),
+        bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, getTitlesWidget: (value, meta) {
+          int i = value.toInt();
+          if (i >= 0 && i < sortedKeys.length) return Text(sortedKeys[i].replaceAll("BLOK ", ""), style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold));
+          return const Text("");
+        }))),
       borderData: FlBorderData(show: false),
-      barGroups: List.generate(sortedKeys.length, (i) {
-        return BarChartGroupData(x: i, barRods: [
-          BarChartRodData(toY: dataBlok[sortedKeys[i]]!, color: accentBlue, width: 22, borderRadius: BorderRadius.circular(4))
-        ]);
-      }),
+      barGroups: List.generate(sortedKeys.length, (i) => BarChartGroupData(x: i, barRods: [BarChartRodData(toY: dataBlok[sortedKeys[i]]!, color: accentBlue, width: 22, borderRadius: BorderRadius.circular(4))])),
     );
   }
 
   PieChartData _qualityPieChartData() {
-    return PieChartData(
-      sectionsSpace: 2,
-      centerSpaceRadius: 40,
-      sections: [
-        PieChartSectionData(value: dataKualitas["Matang"]!, title: '', color: primaryBlue, radius: 25),
-        PieChartSectionData(value: dataKualitas["Mentah"]!, title: '', color: const Color(0xFFFB8C00), radius: 25),
-        PieChartSectionData(value: dataKualitas["Brondolan"]!, title: '', color: accentBlue, radius: 25),
-      ],
-    );
+    double sum = dataKualitas.values.fold(0, (a, b) => a + b);
+    if (sum == 0) return PieChartData(sections: [PieChartSectionData(value: 1, color: Colors.grey[200], radius: 25, title: '')]);
+    return PieChartData(sectionsSpace: 2, centerSpaceRadius: 40, sections: [
+      PieChartSectionData(value: dataKualitas["Matang"]!, title: '', color: primaryBlue, radius: 25),
+      PieChartSectionData(value: dataKualitas["Mentah"]!, title: '', color: const Color(0xFFFB8C00), radius: 25),
+      PieChartSectionData(value: dataKualitas["Brondolan"]!, title: '', color: accentBlue, radius: 25),
+    ]);
   }
 }

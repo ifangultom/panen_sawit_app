@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart'; // 🔥 DETECT WEB
 import 'package:firebase_core/firebase_core.dart';
 import 'package:camera/camera.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:connectivity_plus/connectivity_plus.dart'; // 🔥 ADD THIS
+import 'database_helper.dart'; // 🔥 ADD THIS
 
 // 🔥 PAGES
 import 'login_page.dart';
@@ -54,6 +56,16 @@ Future<void> main() async {
     }
   } catch (e) {
     debugPrint("Camera Init Error: $e");
+  }
+
+  // 3. Setup Auto Sync on Connectivity Change (Mobile Only)
+  if (!kIsWeb) {
+    Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
+      if (results.any((r) => r != ConnectivityResult.none)) {
+        debugPrint("🌐 Koneksi terdeteksi! Menjalankan sinkronisasi otomatis...");
+        DatabaseHelper.instance.syncData();
+      }
+    });
   }
 
   runApp(const MyApp());

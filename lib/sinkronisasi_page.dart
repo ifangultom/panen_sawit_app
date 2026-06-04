@@ -34,7 +34,14 @@ class _SinkronisasiPageState extends State<SinkronisasiPage> {
   Future<void> _loadUser() async {
     final prefs = await SharedPreferences.getInstance();
     kcsLogin = prefs.getString('kcs_login') ?? "";
+    String role = prefs.getString('role') ?? "";
     await loadData();
+    
+    // 🔥 HANYA KCS YANG BISA SYNC OTOMATIS
+    // Mandor dan Admin hanya memantau (readOnly)
+    if (totalOffline > 0 && role.toLowerCase() == 'kcs' && !widget.readOnly) {
+      sync();
+    }
   }
 
   Future<void> loadData() async {
@@ -98,10 +105,14 @@ class _SinkronisasiPageState extends State<SinkronisasiPage> {
     setState(() => loading = true);
 
     try {
-      // 1. Upload ke Firebase & Laravel
+      // 1. Sinkronisasi master data dari cloud ke lokal
+      await DatabaseHelper.instance.syncHarvesters().timeout(const Duration(seconds: 10));
+      await DatabaseHelper.instance.syncBlocks().timeout(const Duration(seconds: 10));
+
+      // 2. Upload data panen ke Firebase & Laravel
       await DatabaseHelper.instance.syncData();
 
-      // 2. Refresh data lokal untuk melihat perubahan status
+      // 3. Refresh data lokal untuk melihat perubahan status
       await loadData();
       
       setState(() => loading = false);
