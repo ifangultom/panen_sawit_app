@@ -6,6 +6,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'database_helper.dart';
+import 'utils/date_utils.dart';
 
 class LaporanPanenPage extends StatefulWidget {
   final String tanggal;
@@ -125,13 +126,10 @@ class _LaporanPanenPageState extends State<LaporanPanenPage> {
       List<Map<String, dynamic>> fPanen = allPanen.where((p) {
         String? afd = p['afdeling']?.toString() ?? p['afd']?.toString();
         if (afd == null || afd.isEmpty) {
-          String kcs = p['kcs']?.toString() ?? "";
-          if (kcs == "KCS1") afd = "AFD1";
-          else if (kcs == "KCS2") afd = "AFD2";
-          else if (kcs == "KCS3") afd = "AFD3";
+          afd = AppDateUtils.mapKcsToAfd(p['kcs']?.toString());
         }
         if (selectedAfdeling != null && selectedAfdeling != "ALL" && afd != selectedAfdeling) return false;
-        return _isWithinFilter(_parseDate(p['tanggal'] ?? p['waktu']));
+        return AppDateUtils.isWithinFilter(AppDateUtils.parseDate(p['tanggal'] ?? p['waktu']), startDate, endDate, selectedMonth, selectedYear);
       }).toList();
 
       // Proses Trip & Hitung Total PKS
@@ -139,8 +137,11 @@ class _LaporanPanenPageState extends State<LaporanPanenPage> {
       double sPks = 0;
       for (var t in allTrips) {
         String? afd = t['afdeling']?.toString();
+        if (afd == null || afd.isEmpty) {
+          afd = AppDateUtils.mapKcsToAfd(t['kcs']?.toString());
+        }
         if (selectedAfdeling != null && selectedAfdeling != "ALL" && afd != selectedAfdeling) continue;
-        if (!_isWithinFilter(_parseDate(t['tanggal'] ?? t['tanggal_trip']))) continue;
+        if (!AppDateUtils.isWithinFilter(AppDateUtils.parseDate(t['tanggal'] ?? t['tanggal_trip']), startDate, endDate, selectedMonth, selectedYear)) continue;
 
         var tId = t['id'] ?? t['id_firebase'];
         int jjg = 0;
@@ -212,31 +213,10 @@ class _LaporanPanenPageState extends State<LaporanPanenPage> {
   }
 
   bool _isWithinFilter(DateTime? dt) {
-    if (dt == null) return false;
-    DateTime d = DateTime(dt.year, dt.month, dt.day);
-    DateTime s = DateTime(startDate!.year, startDate!.month, startDate!.day);
-    DateTime e = DateTime(endDate!.year, endDate!.month, endDate!.day);
-    return !d.isBefore(s) && !d.isAfter(e);
+    return AppDateUtils.isWithinFilter(dt, startDate, endDate, selectedMonth, selectedYear);
   }
 
-  DateTime? _parseDate(dynamic val) {
-    if (val == null || val.toString().isEmpty) return null;
-    String s = val.toString();
-    try {
-      // Handle yyyy-MM-dd HH:mm:ss or yyyy-MM-dd
-      if (s.contains('-') && s.indexOf('-') == 4) {
-        return DateTime.parse(s);
-      }
-      // Handle dd-MM-yyyy
-      if (s.contains('-') && s.indexOf('-') == 2) {
-        return DateFormat("dd-MM-yyyy").parse(s);
-      }
-      // Fallback
-      return DateTime.tryParse(s);
-    } catch (_) {
-      return null;
-    }
-  }
+
 
   Future<void> _generatePdf() async {
     if (listDetailPanen.isEmpty && listDetailTrip.isEmpty) {

@@ -5,6 +5,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'database_helper.dart';
+import 'utils/date_utils.dart';
 
 class RiwayatPksPage extends StatefulWidget {
   final DateTime? initialDate;
@@ -106,6 +107,10 @@ class _RiwayatPksPageState extends State<RiwayatPksPage> {
       filteredData = allData.where((item) {
         // Gunakan mapping afdeling yang sudah dinormalisasi
         String? afd = item['afdeling']?.toString();
+        if (afd == null || afd.isEmpty) {
+          afd = AppDateUtils.mapKcsToAfd(item['kcs']?.toString());
+        }
+        
         if (selectedAfdeling != null && afd != selectedAfdeling) return false;
 
         bool matchesSearch = searchQuery.isEmpty ||
@@ -113,7 +118,7 @@ class _RiwayatPksPageState extends State<RiwayatPksPage> {
             (item['sopir']?.toString().toLowerCase() ?? "").contains(searchQuery.toLowerCase()) ||
             (item['no_tiket']?.toString().toLowerCase() ?? "").contains(searchQuery.toLowerCase());
 
-        DateTime? dt = _parseDate(item['waktu_timbang'] ?? item['trip_tanggal'] ?? item['tanggal_trip'] ?? item['tanggal']);
+        DateTime? dt = AppDateUtils.parseDate(item['waktu_timbang'] ?? item['trip_tanggal'] ?? item['tanggal_trip'] ?? item['tanggal']);
         
         bool matchesDate = true;
         if (dt != null) {
@@ -134,12 +139,6 @@ class _RiwayatPksPageState extends State<RiwayatPksPage> {
     });
   }
 
-  DateTime? _parseDate(dynamic val) {
-    if (val == null) return null;
-    if (val is Timestamp) return val.toDate();
-    if (val is DateTime) return val;
-    return DateTime.tryParse(val.toString());
-  }
 
   Future<void> _pickDate() async {
     DateTime? picked = await showDatePicker(

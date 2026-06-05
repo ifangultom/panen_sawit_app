@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'database_helper.dart';
+import 'utils/date_utils.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart' as printing_lib;
@@ -77,27 +78,31 @@ class _MonitoringDataPageState extends State<MonitoringDataPage> {
   void applyFilter() {
     setState(() {
       filteredData = allData.where((item) {
-        if (selectedAfdeling != null && item['afdeling'] != selectedAfdeling) return false;
+        String? afd = item['afdeling']?.toString();
+        if (afd == null || afd.isEmpty) {
+          afd = AppDateUtils.mapKcsToAfd(item['kcs']?.toString());
+        }
+
+        if (selectedAfdeling != null && afd != selectedAfdeling) return false;
 
         bool matchesSearch = searchQuery.isEmpty ||
             (item['pemanen']?.toString().toLowerCase() ?? "").contains(searchQuery.toLowerCase()) ||
             (item['blok']?.toString().toLowerCase() ?? "").contains(searchQuery.toLowerCase()) ||
             (item['catatan']?.toString().toLowerCase() ?? "").contains(searchQuery.toLowerCase());
 
-        String? tglStr = item['tanggal']?.toString();
+        DateTime? dt = AppDateUtils.parseDate(item['tanggal'] ?? item['waktu']);
         bool matchesDate = true;
-        if (tglStr != null) {
-          try {
-            DateTime dt = DateTime.parse(tglStr);
-            if (selectedYear != null && dt.year != selectedYear) matchesDate = false;
-            if (selectedMonth != null && dt.month != selectedMonth) matchesDate = false;
-            if (filterTanggal != null) {
-              String fDate = filterTanggal!.toIso8601String().split('T')[0];
-              if (!tglStr.startsWith(fDate)) matchesDate = false;
+        if (dt != null) {
+          if (selectedYear != null && dt.year != selectedYear) matchesDate = false;
+          if (selectedMonth != null && dt.month != selectedMonth) matchesDate = false;
+          if (filterTanggal != null) {
+            if (dt.year != filterTanggal!.year || 
+                dt.month != filterTanggal!.month || 
+                dt.day != filterTanggal!.day) {
+              matchesDate = false;
             }
-          } catch (_) {}
+          }
         }
-
         return matchesSearch && matchesDate;
       }).toList();
     });
@@ -513,11 +518,16 @@ class _MonitoringDataPageState extends State<MonitoringDataPage> {
     if (path.startsWith('data:image')) {
       try {
         final base64Data = path.split(',').last.replaceAll(RegExp(r'\s+'), '');
-        return Image.memory(
-          base64Decode(base64Data),
+        final bytes = base64Decode(base64Data);
+        return Image(
+          image: ResizeImage(
+            MemoryImage(bytes),
+            width: 150,
+          ),
           width: 70,
           height: 70,
           fit: BoxFit.cover,
+          filterQuality: FilterQuality.low,
           errorBuilder: (c, e, s) => _buildPlaceholder(icon: Icons.broken_image),
         );
       } catch (e) {
@@ -533,6 +543,7 @@ class _MonitoringDataPageState extends State<MonitoringDataPage> {
       File(path),
       width: 70,
       height: 70,
+      cacheWidth: 150,
       fit: BoxFit.cover,
       errorBuilder: (c, e, s) => _buildPlaceholder(icon: Icons.broken_image),
     );

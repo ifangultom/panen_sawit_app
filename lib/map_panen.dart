@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'database_helper.dart';
 import 'detail_panen_page.dart';
+import 'utils/date_utils.dart';
 
 class MapPanenPage extends StatefulWidget {
   final DateTime? initialDate;
@@ -73,13 +74,13 @@ class _MapPanenPageState extends State<MapPanenPage> {
       // 3. Gabungkan Data (Unique)
       Map<String, Map<String, dynamic>> mergedMap = {};
       for (var item in localData) {
-        DateTime? dt = _parseDate(item['tanggal'] ?? item['waktu']);
+        DateTime? dt = AppDateUtils.parseDate(item['tanggal'] ?? item['waktu']);
         String tglStr = dt?.toIso8601String().split('T')[0] ?? "no-date";
         String key = "${item['pemanen']}_${tglStr}_${item['blok']}";
         mergedMap[key] = Map<String, dynamic>.from(item);
       }
       for (var item in cloudData) {
-        DateTime? dt = _parseDate(item['tanggal'] ?? item['waktu']);
+        DateTime? dt = AppDateUtils.parseDate(item['tanggal'] ?? item['waktu']);
         String tglStr = dt?.toIso8601String().split('T')[0] ?? "no-date";
         String key = "${item['pemanen']}_${tglStr}_${item['blok']}";
         mergedMap[key] = Map<String, dynamic>.from(item);
@@ -106,10 +107,14 @@ class _MapPanenPageState extends State<MapPanenPage> {
 
   void applyFilter() {
     List<Map<String, dynamic>> filtered = allData.where((item) {
-      if (selectedAfdeling != null && item['afdeling']?.toString() != selectedAfdeling) return false;
+      String? afd = item['afdeling']?.toString();
+      if (afd == null || afd.isEmpty) {
+        afd = AppDateUtils.mapKcsToAfd(item['kcs']?.toString());
+      }
+      if (selectedAfdeling != null && afd != selectedAfdeling) return false;
       
       if (selectedYear != null || filterTanggal != null) {
-        DateTime? dt = _parseDate(item['tanggal'] ?? item['waktu']);
+        DateTime? dt = AppDateUtils.parseDate(item['tanggal'] ?? item['waktu']);
         if (dt == null) return false;
         
         if (selectedYear != null) {
@@ -157,12 +162,6 @@ class _MapPanenPageState extends State<MapPanenPage> {
     return null;
   }
 
-  DateTime? _parseDate(dynamic val) {
-    if (val == null) return null;
-    if (val is Timestamp) return val.toDate();
-    if (val is DateTime) return val;
-    return DateTime.tryParse(val.toString());
-  }
 
   void _centerMapToData(List<Map<String, dynamic>> currentData) {
     List<LatLng> points = [];

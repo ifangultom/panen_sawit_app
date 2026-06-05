@@ -8,6 +8,7 @@ import 'package:printing/printing.dart';
 import 'database_helper.dart';
 import 'detail_trip_page.dart';
 import 'input_pks_page.dart';
+import 'utils/date_utils.dart';
 
 class RiwayatTripPage extends StatefulWidget {
   final bool isGlobal;
@@ -64,12 +65,6 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
     loadTrip();
   }
 
-  DateTime? _parseDate(dynamic val) {
-    if (val == null) return null;
-    if (val is Timestamp) return val.toDate();
-    if (val is DateTime) return val;
-    return DateTime.tryParse(val.toString());
-  }
 
   Future<void> loadTrip() async {
     if (kIsWeb) {
@@ -227,9 +222,13 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
       }).toList();
 
       tripList = allFetched.where((t) {
-        if (selectedAfdeling != null && t['afdeling'] != selectedAfdeling) return false;
+        String? afd = t['afdeling']?.toString();
+        if (afd == null || afd.isEmpty) {
+          afd = AppDateUtils.mapKcsToAfd(t['kcs']?.toString());
+        }
+        if (selectedAfdeling != null && afd != selectedAfdeling) return false;
 
-        DateTime? dt = _parseDate(t['tanggal'] ?? t['waktu'] ?? t['tanggal_trip'] ?? t['waktu_timbang']);
+        DateTime? dt = AppDateUtils.parseDate(t['tanggal'] ?? t['waktu'] ?? t['tanggal_trip'] ?? t['waktu_timbang']);
         if (selectedYear == null && filterTanggal == null && selectedMonth == null) return true;
         if (dt == null) return false;
 
@@ -246,8 +245,8 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
       }).toList();
       
       tripList.sort((a, b) {
-        DateTime? da = _parseDate(a['tanggal']);
-        DateTime? db = _parseDate(b['tanggal']);
+        DateTime? da = AppDateUtils.parseDate(a['tanggal']);
+        DateTime? db = AppDateUtils.parseDate(b['tanggal']);
         if (da == null || db == null) return 0;
         return db.compareTo(da);
       });
@@ -256,7 +255,7 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
 
   String formatTanggal(dynamic tgl) {
     if (tgl == null) return "-";
-    DateTime? dt = _parseDate(tgl);
+    DateTime? dt = AppDateUtils.parseDate(tgl);
     if (dt == null) return tgl.toString();
     return "${dt.day}-${dt.month}-${dt.year}";
   }

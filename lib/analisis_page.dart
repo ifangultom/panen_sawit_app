@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'utils/date_utils.dart';
 
 class AnalisisProduksiPage extends StatefulWidget {
   final bool isWebView;
@@ -41,28 +42,6 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
     _prosesDataAsli();
   }
 
-  DateTime? _parseDate(dynamic dateObj) {
-    if (dateObj == null) return null;
-    if (dateObj is Timestamp) return dateObj.toDate();
-    if (dateObj is String) {
-      try { return DateTime.parse(dateObj); } catch (_) {
-        try {
-          final parts = dateObj.split(' ');
-          if (parts.length >= 3) {
-            int day = int.parse(parts[0]);
-            int year = int.parse(parts[2]);
-            const monthsMap = {
-              'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'Mei': 5, 'Jun': 6,
-              'Jul': 7, 'Ags': 8, 'Sep': 9, 'Okt': 10, 'Nov': 11, 'Des': 12
-            };
-            int month = monthsMap[parts[1]] ?? 1;
-            return DateTime(year, month, day);
-          }
-        } catch (_) {}
-      }
-    }
-    return null;
-  }
 
   void _prosesDataAsli() {
     dataBlok = {};
@@ -90,17 +69,15 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
       String status = (item['status'] ?? item['sync_status'] ?? "").toString().toUpperCase();
       if (status != "ACC") continue;
 
-      String itemAfd = (item['afdeling'] ?? "").toString().toUpperCase();
+      String itemAfd = item['afdeling']?.toString() ?? "";
       if (itemAfd.isEmpty) {
-        String kcs = item['kcs']?.toString() ?? "";
-        if (kcs == "KCS1") itemAfd = "AFD1";
-        else if (kcs == "KCS2") itemAfd = "AFD2";
-        else if (kcs == "KCS3") itemAfd = "AFD3";
+        itemAfd = AppDateUtils.mapKcsToAfd(item['kcs']?.toString());
       }
+      itemAfd = itemAfd.toUpperCase();
 
       if (selectedAfdeling != null && itemAfd != selectedAfdeling!.toUpperCase()) continue;
 
-      DateTime? tgl = _parseDate(item['tanggal'] ?? item['waktu']);
+      DateTime? tgl = AppDateUtils.parseDate(item['tanggal'] ?? item['waktu']);
       if (tgl != null) {
         if (selectedMonth != null && tgl.month != selectedMonth) continue;
         if (selectedYear != null && tgl.year != selectedYear) continue;
@@ -130,19 +107,17 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
     for (var item in widget.laporanPanen) {
       if ((item['status'] ?? item['sync_status'] ?? "").toString().toUpperCase() != "ACC") continue;
 
-      DateTime? tgl = _parseDate(item['tanggal'] ?? item['waktu']);
+      DateTime? tgl = AppDateUtils.parseDate(item['tanggal'] ?? item['waktu']);
       if (tgl != null) {
         if (selectedMonth != null && tgl.month != selectedMonth) continue;
         if (selectedYear != null && tgl.year != selectedYear) continue;
       }
 
-      String itemAfd = (item['afdeling'] ?? "").toString().toUpperCase();
+      String itemAfd = item['afdeling']?.toString() ?? "";
       if (itemAfd.isEmpty) {
-        String kcs = item['kcs']?.toString() ?? "";
-        if (kcs == "KCS1") itemAfd = "AFD1";
-        else if (kcs == "KCS2") itemAfd = "AFD2";
-        else if (kcs == "KCS3") itemAfd = "AFD3";
+        itemAfd = AppDateUtils.mapKcsToAfd(item['kcs']?.toString());
       }
+      itemAfd = itemAfd.toUpperCase();
       
       if (totals.containsKey(itemAfd)) {
         double matang = double.tryParse(item['matang']?.toString() ?? "0") ?? 0;
@@ -159,19 +134,13 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
     for (var item in widget.laporanPanen) {
       if ((item['status'] ?? item['sync_status'] ?? "").toString().toUpperCase() != "ACC") continue;
       
-      DateTime? tgl = _parseDate(item['tanggal'] ?? item['waktu']);
+      DateTime? tgl = AppDateUtils.parseDate(item['tanggal'] ?? item['waktu']);
       if (tgl != null) {
         if (selectedMonth != null && tgl.month != selectedMonth) continue;
         if (selectedYear != null && tgl.year != selectedYear) continue;
       }
 
-      String itemAfd = (item['afdeling'] ?? "").toString().toUpperCase();
-      if (itemAfd.isEmpty) {
-        String kcs = item['kcs']?.toString() ?? "";
-        if (kcs == "KCS1") itemAfd = "AFD1";
-        else if (kcs == "KCS2") itemAfd = "AFD2";
-        else if (kcs == "KCS3") itemAfd = "AFD3";
-      }
+      String itemAfd = AppDateUtils.mapKcsToAfd(item['afdeling'] ?? item['kcs']);
 
       if (itemAfd == afdName) {
         String blok = (item['blok'] ?? "-").toString().toUpperCase();

@@ -117,13 +117,28 @@ class _DataPanenPageState extends State<DataPanenPage> {
         query = query.orderBy('tanggal', descending: true);
 
         final snapshot = await query.get();
-        temp = snapshot.docs.map((doc) {
-          final d = Map<String, dynamic>.from(doc.data() as Map);
-          d['firebase_id'] = doc.id;
-          // Firebase tidak punya int id, pakai hashCode sebagai lokal id
-          d['id'] = d['local_id'] ?? doc.id.hashCode.abs();
-          return d;
-        }).toList();
+        
+        // Gunakan pemrosesan async untuk decode gambar agar tidak memblock UI
+        temp = await Future(() {
+          return snapshot.docs.map((doc) {
+            final d = Map<String, dynamic>.from(doc.data() as Map);
+            d['firebase_id'] = doc.id;
+            d['id'] = d['local_id'] ?? doc.id.hashCode.abs();
+            
+            // CACHE BYTES: Decode sekali di sini
+            if (d['foto'] != null && d['foto'].toString().startsWith('data:image')) {
+              try {
+                final String path = d['foto'].toString();
+                final base64Data = path.contains(',') ? path.split(',').last : path;
+                final cleanBase64 = base64Data.replaceAll(RegExp(r'\s+'), '');
+                d['foto_bytes'] = base64Decode(cleanBase64);
+              } catch (e) {
+                debugPrint("Error pre-decoding: $e");
+              }
+            }
+            return d;
+          }).toList();
+        });
 
       } else {
         // 📱 Offline: baca dari SQLite lokal
@@ -670,21 +685,9 @@ class _DataPanenPageState extends State<DataPanenPage> {
                                 ),
                               ],
 
-                              // Foto
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(12),
-                                child: (item['foto'] != null && item['foto'].toString().isNotEmpty)
-                                    ? _buildThumbnail(item['foto'].toString())
-                                    : Container(
-                                        width: 72,
-                                        height: 72,
-                                        color: _biruPudar,
-                                        child: const Icon(
-                                          Icons.image_not_supported_rounded,
-                                          color: _biru,
-                                          size: 28,
-                                        ),
-                                      ),
+                                child: _buildThumbnail(item),
                               ),
 
                               const SizedBox(width: 12),
@@ -825,27 +828,42 @@ class _DataPanenPageState extends State<DataPanenPage> {
 
   // ─── HELPER WIDGETS ────────────────────────────────────────────────────────
 
-  Widget _buildThumbnail(String path) {
+  Widget _buildThumbnail(Map<String, dynamic> item) {
+    final path = (item['foto'] ?? "").toString();
+    
+    // 1. Handle Base64 with pre-decoded bytes for performance
+    if (item['foto_bytes'] != null) {
+      return Image(
+        image: ResizeImage(
+          MemoryImage(item['foto_bytes']),
+          width: 150,
+        ),
+        width: 72,
+        height: 72,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.low,
+        errorBuilder: (c, e, s) => _buildPlaceholder(),
+      );
+    }
+
+    // Fallback if bytes not ready but path is Base64
     if (path.startsWith('data:image')) {
       try {
         final base64Data = path.split(',').last.replaceAll(RegExp(r'\s+'), '');
-        return Image.memory(
-          base64Decode(base64Data),
+        final bytes = base64Decode(base64Data);
+        return Image(
+          image: ResizeImage(
+            MemoryImage(bytes),
+            width: 150,
+          ),
           width: 72,
           height: 72,
           fit: BoxFit.cover,
-          errorBuilder: (c, e, s) => Container(
-            width: 72, height: 72,
-            color: _biruPudar,
-            child: const Icon(Icons.broken_image, color: _biru),
-          ),
+          filterQuality: FilterQuality.low,
+          errorBuilder: (c, e, s) => _buildPlaceholder(),
         );
       } catch (e) {
-        return Container(
-          width: 72, height: 72,
-          color: _biruPudar,
-          child: const Icon(Icons.broken_image, color: _biru),
-        );
+        return _buildPlaceholder();
       }
     }
 
@@ -856,30 +874,30 @@ class _DataPanenPageState extends State<DataPanenPage> {
           width: 72,
           height: 72,
           fit: BoxFit.cover,
-          errorBuilder: (c, e, s) => Container(
-            width: 72, height: 72,
-            color: _biruPudar,
-            child: const Icon(Icons.broken_image, color: _biru),
-          ),
+          errorBuilder: (c, e, s) => _buildPlaceholder(),
         );
       }
-      return Container(
-        width: 72, height: 72,
-        color: _biruPudar,
-        child: const Icon(Icons.image_rounded, color: _biru),
-      );
+      return _buildPlaceholder();
     }
+
+    if (path.isEmpty) return _buildPlaceholder();
 
     return Image.file(
       File(path),
       width: 72,
       height: 72,
+      cacheWidth: 150,
       fit: BoxFit.cover,
-      errorBuilder: (c, e, s) => Container(
-        width: 72, height: 72,
-        color: _biruPudar,
-        child: const Icon(Icons.broken_image, color: _biru),
-      ),
+      errorBuilder: (c, e, s) => _buildPlaceholder(),
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      width: 72,
+      height: 72,
+      color: _biruPudar,
+      child: const Icon(Icons.image_not_supported_rounded, color: _biru, size: 28),
     );
   }
 

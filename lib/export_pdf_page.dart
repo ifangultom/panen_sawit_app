@@ -3,6 +3,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'database_helper.dart';
+import 'utils/date_utils.dart';
 
 class ExportPdfPage extends StatelessWidget {
   const ExportPdfPage({super.key});
@@ -74,7 +75,12 @@ class ExportPdfPage extends StatelessWidget {
                   cellStyle: const pw.TextStyle(fontSize: 9),
                   headerDecoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFF0D47A1)),
                   data: data.map((e) {
-                    String afdeling = e['afdeling']?.toString() ?? "-";
+                    String afdeling = e['afdeling']?.toString() ?? "";
+                    if (afdeling.isEmpty) {
+                      afdeling = AppDateUtils.mapKcsToAfd(e['kcs']?.toString());
+                    }
+                    if (afdeling.isEmpty) afdeling = "-";
+
                     return [
                       e['tanggal']?.toString().split(" ")[0] ?? "-",
                       e['pemanen'] ?? "-",

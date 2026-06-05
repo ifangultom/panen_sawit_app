@@ -14,6 +14,7 @@ import 'dart:convert';
 import 'package:image_picker/image_picker.dart';
 import 'user_helper.dart';
 import 'api_service.dart';
+import 'utils/date_utils.dart';
 
 // 🔥 Import Halaman Terkait
 import 'login_page.dart';
@@ -115,7 +116,6 @@ class _DashboardAdminState extends State<DashboardAdmin> {
 
   Future<void> loadFromFirebase() async {
     try {
-      // 1. Fetch awal (Sekali tarik untuk memastikan data tidak kosong saat loading selesai)
       final results = await Future.wait([
         FirebaseFirestore.instance.collection('panen').get(),
         FirebaseFirestore.instance.collection('pks').get(),
@@ -124,24 +124,32 @@ class _DashboardAdminState extends State<DashboardAdmin> {
 
       if (!mounted) return;
 
+      // Fungsi bantu untuk memproses item secara efisien
+      Map<String, dynamic> processItem(DocumentSnapshot doc) {
+        var d = doc.data() as Map<String, dynamic>;
+        d['id_firebase'] = doc.id;
+        d['tanggal'] = d['tanggal'] ?? d['waktu'] ?? d['waktu_timbang'] ?? d['tanggal_trip'];
+        
+        // JANGAN decode gambar di sini untuk ribuan data sekaligus karena akan memblock UI thread.
+        // Cukup pastikan field foto ada. Decoding akan dilakukan di widget secara lazy.
+        return d;
+      }
+
       setState(() {
-        allData = results[0].docs.map((doc) {
-          var d = doc.data();
-          d['id_firebase'] = doc.id;
-          d['tanggal'] = d['tanggal'] ?? d['waktu'] ?? d['waktu_timbang'] ?? d['tanggal_trip'];
-          return d;
-        }).toList();
+        allData = results[0].docs.map(processItem).toList();
+        allData.sort((a, b) => (b['tanggal']?.toString() ?? "").compareTo(a['tanggal']?.toString() ?? ""));
 
         allPksData = results[1].docs.map((doc) {
-          var d = doc.data();
+          var d = doc.data() as Map<String, dynamic>;
           d['id_firebase'] = doc.id;
           d['tanggal'] = d['tanggal'] ?? d['waktu_timbang'] ?? d['tanggal_trip'] ?? d['waktu'];
           d['berat_netto'] = d['berat_netto'] ?? d['netto'] ?? d['berat'] ?? 0;
           return d;
         }).toList();
+        allPksData.sort((a, b) => (b['tanggal']?.toString() ?? "").compareTo(a['tanggal']?.toString() ?? ""));
 
         allTripsData = results[2].docs.map((doc) {
-          var d = doc.data();
+          var d = doc.data() as Map<String, dynamic>;
           d['id_firebase'] = doc.id;
           d['tanggal'] = d['tanggal'] ?? d['tanggal_trip'] ?? d['waktu'] ?? d['waktu_timbang'];
           d['no_plat'] = d['no_plat'] ?? d['kendaraan'] ?? d['truk'] ?? "-";
@@ -149,22 +157,18 @@ class _DashboardAdminState extends State<DashboardAdmin> {
           d['jumlah_panen'] = d['jumlah_panen'] ?? d['muatan'] ?? d['total_muatan'] ?? 0;
           return d;
         }).toList();
+        allTripsData.sort((a, b) => (b['tanggal']?.toString() ?? "").compareTo(a['tanggal']?.toString() ?? ""));
       });
       applyFilter();
 
-      // 2. Setup listeners untuk real-time update
+      // Update Listeners untuk juga menggunakan pre-processing
       FirebaseFirestore.instance.collection('panen').snapshots().listen((snapshot) {
         if (!mounted) return;
         setState(() {
-          allData = snapshot.docs.map((doc) {
-            var d = doc.data();
-            d['id_firebase'] = doc.id;
-            d['tanggal'] = d['tanggal'] ?? d['waktu'] ?? d['waktu_timbang'] ?? d['tanggal_trip'];
-            return d;
-          }).toList();
+          allData = snapshot.docs.map(processItem).toList();
         });
         applyFilter();
-      }, onError: (e) => debugPrint("❌ Error Panen Listener: $e"));
+      });
 
       FirebaseFirestore.instance.collection('pks').snapshots().listen((snapshot) {
         if (!mounted) return;
@@ -474,8 +478,14 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     }
 
     return Image(
-      image: provider,
+      image: ResizeImage(
+        provider,
+        width: (size * 2).toInt(),
+        height: (size * 2).toInt(),
+      ),
       fit: BoxFit.cover,
+      width: size,
+      height: size,
       filterQuality: FilterQuality.medium,
       errorBuilder: (context, error, stackTrace) {
         debugPrint("Image load error: $error");
@@ -502,19 +512,12 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     List<Map<String, dynamic>> filteredPanen = allData.where((item) {
       String? afd = item['afdeling']?.toString();
       if (afd == null || afd.isEmpty) {
-        String kcs = item['kcs']?.toString() ?? "";
-        if (kcs == "KCS1") {
-          afd = "AFD1";
-        } else if (kcs == "KCS2") {
-          afd = "AFD2";
-        } else if (kcs == "KCS3") {
-          afd = "AFD3";
-        }
+        afd = AppDateUtils.mapKcsToAfd(item['kcs']?.toString());
       }
 
       if (selectedAfdeling != null && afd != selectedAfdeling) return false;
       
-      DateTime? dt = _parseDate(item['tanggal'] ?? item['waktu']);
+      DateTime? dt = AppDateUtils.parseDate(item['tanggal'] ?? item['waktu']);
       if (dt == null) return selectedYear == null && filterTanggalStart == null;
 
       if (selectedYear != null || selectedMonth != null) {
@@ -552,19 +555,12 @@ class _DashboardAdminState extends State<DashboardAdmin> {
       }
 
       if (afd == null || afd.isEmpty) {
-        String kcs = item['kcs']?.toString() ?? "";
-        if (kcs == "KCS1") {
-          afd = "AFD1";
-        } else if (kcs == "KCS2") {
-          afd = "AFD2";
-        } else if (kcs == "KCS3") {
-          afd = "AFD3";
-        }
+        afd = AppDateUtils.mapKcsToAfd(item['kcs']?.toString());
       }
       if (selectedAfdeling != null && afd != selectedAfdeling) return false;
       
       // 2. Mapping Tanggal
-      DateTime? dt = _parseDate(item['tanggal'] ?? item['waktu_timbang'] ?? item['waktu']);
+      DateTime? dt = AppDateUtils.parseDate(item['tanggal'] ?? item['waktu_timbang'] ?? item['waktu']);
 
       // Fallback Tanggal dari Trip
       if (dt == null) {
@@ -576,7 +572,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
               orElse: () => <String, dynamic>{}
             );
             if (trip.isNotEmpty) {
-              dt = _parseDate(trip['tanggal'] ?? trip['tanggal_trip'] ?? trip['waktu']);
+              dt = AppDateUtils.parseDate(trip['tanggal'] ?? trip['tanggal_trip'] ?? trip['waktu']);
             }
           } catch (_) {}
         }
@@ -614,7 +610,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
       if (selectedAfdeling != null && afd != selectedAfdeling) return false;
       
       // 2. Mapping Tanggal (Sangat Fleksibel)
-      DateTime? dt = _parseDate(item['tanggal'] ?? item['tanggal_trip'] ?? item['waktu']);
+      DateTime? dt = AppDateUtils.parseDate(item['tanggal'] ?? item['tanggal_trip'] ?? item['waktu']);
       
       // Jika tidak ada tanggal, tampilkan jika tidak ada filter waktu aktif
       if (dt == null) return selectedYear == null && filterTanggalStart == null;
@@ -642,48 +638,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     });
   }
 
-  DateTime? _parseDate(dynamic val) {
-    if (val == null) return null;
-    if (val is Timestamp) return val.toDate();
-    if (val is DateTime) return val;
-    if (val is String) {
-      if (val.isEmpty) return null;
-      try {
-        return DateTime.parse(val);
-      } catch (_) {
-        try {
-          // Handle format "dd-MM-yyyy" atau "dd/MM/yyyy"
-          if (val.contains('-') || val.contains('/')) {
-            String separator = val.contains('-') ? '-' : '/';
-            final parts = val.split(separator);
-            if (parts.length >= 3) {
-              int d = int.parse(parts[0]);
-              int m = int.parse(parts[1]);
-              int y = int.parse(parts[2]);
-              if (y < 100) y += 2000;
-              return DateTime(y, m, d);
-            }
-          }
-          
-          // Handle format "dd MMM yyyy"
-          final parts = val.split(' ');
-          if (parts.length >= 3) {
-            int day = int.parse(parts[0]);
-            int year = int.parse(parts[2]);
-            const monthsMap = {
-              'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'Mei': 5, 'Jun': 6,
-              'Jul': 7, 'Ags': 8, 'Sep': 9, 'Okt': 10, 'Nov': 11, 'Des': 12,
-              'Januari': 1, 'Februari': 2, 'Maret': 3, 'April': 4, 'Juni': 6,
-              'Juli': 7, 'Agustus': 8, 'September': 9, 'Oktober': 10, 'November': 11, 'Desember': 12
-            };
-            int month = monthsMap[parts[1]] ?? 1;
-            return DateTime(year, month, day);
-          }
-        } catch (_) {}
-      }
-    }
-    return DateTime.tryParse(val.toString());
-  }
+
 
   void processData(List<Map<String, dynamic>> filteredPanen, List<Map<String, dynamic>> filteredPks, List<Map<String, dynamic>> filteredTrips) {
     double totalPksKg = 0;
@@ -699,36 +654,39 @@ class _DashboardAdminState extends State<DashboardAdmin> {
         pemanenSet.add(namaPemanen);
       }
 
-      // Hanya hitung angka Janjang & Ranking untuk data yang sudah di-ACC
-      if ((item['status'] ?? item['sync_status']) != "ACC" && (item['status'] ?? item['sync_status']) != "acc") continue;
+      // Hitung Janjang (Hanya yang ACC untuk ranking & total janjang utama)
+      String status = (item['status'] ?? item['sync_status'] ?? "").toString().toUpperCase();
+      bool isAcc = status == "ACC";
 
-      int matang = int.tryParse(item['matang']?.toString() ?? "0") ?? 0;
-      int mentah = int.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
-      int total = matang + mentah;
-      totalJjg += total;
-      
-      if (namaPemanen != null) {
-        if (!rankingMap.containsKey(namaPemanen)) {
-          String? afd = item['afdeling']?.toString();
-          if (afd == null || afd.isEmpty) {
-            String kcs = item['kcs']?.toString() ?? "";
-            if (kcs == "KCS1") {
-              afd = "AFD1";
-            } else if (kcs == "KCS2") {
-              afd = "AFD2";
-            } else if (kcs == "KCS3") {
-              afd = "AFD3";
+      if (isAcc) {
+        int matang = int.tryParse(item['matang']?.toString() ?? "0") ?? 0;
+        int mentah = int.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
+        int total = matang + mentah;
+        totalJjg += total;
+        
+        if (namaPemanen != null) {
+          if (!rankingMap.containsKey(namaPemanen)) {
+            String? afd = item['afdeling']?.toString();
+            if (afd == null || afd.isEmpty) {
+              String kcs = item['kcs']?.toString() ?? "";
+              if (kcs == "KCS1") {
+                afd = "AFD1";
+              } else if (kcs == "KCS2") {
+                afd = "AFD2";
+              } else if (kcs == "KCS3") {
+                afd = "AFD3";
+              }
             }
+            rankingMap[namaPemanen] = {
+              'nama': namaPemanen, 
+              'janjang': 0, 
+              'brondolan': 0.0,
+              'afdeling': afd ?? "-"
+            };
           }
-          rankingMap[namaPemanen] = {
-            'nama': namaPemanen, 
-            'janjang': 0, 
-            'brondolan': 0.0,
-            'afdeling': afd ?? "-"
-          };
+          rankingMap[namaPemanen]!['janjang'] += total;
+          rankingMap[namaPemanen]!['brondolan'] += double.tryParse(item['brondolan']?.toString() ?? "0") ?? 0;
         }
-        rankingMap[namaPemanen]!['janjang'] += total;
-        rankingMap[namaPemanen]!['brondolan'] += double.tryParse(item['brondolan']?.toString() ?? "0") ?? 0;
       }
     }
 
@@ -769,7 +727,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     if (selectedYear != null && selectedMonth == null) {
       // View per bulan (1-12)
       for (var item in filteredPanen) {
-        DateTime? dt = _parseDate(item['tanggal'] ?? item['waktu']);
+        DateTime? dt = AppDateUtils.parseDate(item['tanggal'] ?? item['waktu']);
         if (dt != null) {
           double month = dt.month.toDouble();
           double matang = double.tryParse(item['matang']?.toString() ?? "0") ?? 0;
@@ -781,7 +739,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     } else if (selectedMonth != null) {
       // View per tanggal (1-31)
       for (var item in filteredPanen) {
-        DateTime? dt = _parseDate(item['tanggal'] ?? item['waktu']);
+        DateTime? dt = AppDateUtils.parseDate(item['tanggal'] ?? item['waktu']);
         if (dt != null) {
           double day = dt.day.toDouble();
           double matang = double.tryParse(item['matang']?.toString() ?? "0") ?? 0;
@@ -793,7 +751,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     } else {
       // View per jam (0-23) - Default/Daily
       for (var item in filteredPanen) {
-        DateTime? dt = _parseDate(item['waktu'] ?? item['tanggal']);
+        DateTime? dt = AppDateUtils.parseDate(item['waktu'] ?? item['tanggal']);
         if (dt != null) {
           double hour = dt.hour.toDouble();
           // Jika hour adalah 0 (mungkin karena hanya simpan tanggal), 
@@ -852,7 +810,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
           subtitle: "Lokasi pengambilan TPH secara Real-time",
           action: Row(
             children: [
-              if (filterTanggalStart != null || selectedAfdeling != null)
+              if (filterTanggalStart != null || selectedAfdeling != null || selectedYear != null)
                 IconButton(
                   icon: const Icon(Icons.filter_alt_off, size: 20, color: Colors.redAccent),
                   onPressed: _clearFilter,
@@ -1117,11 +1075,157 @@ class _DashboardAdminState extends State<DashboardAdmin> {
   }
 
   Widget _webViewDataPanen() {
-    return ListView(
-      padding: const EdgeInsets.all(25),
-      children: [
-        webDataSection(),
+    // Filter data berdasarkan search query
+    List<Map<String, dynamic>> filteredBySearch = data.where((item) {
+      if (searchQuery.isEmpty) return true;
+      String pemanen = (item['pemanen'] ?? "").toString().toLowerCase();
+      String blok = (item['blok'] ?? "").toString().toLowerCase();
+      String afd = (item['afdeling'] ?? "").toString().toLowerCase();
+      return pemanen.contains(searchQuery) || blok.contains(searchQuery) || afd.contains(searchQuery);
+    }).toList();
+
+    // Kelompokkan data berdasarkan Afdeling
+    Map<String, List<Map<String, dynamic>>> groupedData = {};
+    for (var item in filteredBySearch) {
+      String afd = item['afdeling']?.toString() ?? "N/A";
+      groupedData.putIfAbsent(afd, () => []).add(item);
+    }
+    List<String> sortedAfdelings = groupedData.keys.toList()..sort();
+
+    return CustomScrollView(
+      controller: _scrollController,
+      slivers: [
+        // 1. Header & Filter (Tetap di atas)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.all(25),
+            child: _buildWebDataHeader(),
+          ),
+        ),
+
+        // 2. Data Terkelompok
+        if (filteredBySearch.isEmpty)
+          const SliverFillRemaining(
+            child: Center(child: Text("Tidak ada data ditemukan", style: TextStyle(color: Colors.grey))),
+          )
+        else
+          ...sortedAfdelings.expand((afd) => [
+            // Header Afdeling
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(30, 10, 30, 15),
+                child: Row(
+                  children: [
+                    const Icon(Icons.folder_shared_rounded, color: Color(0xFF0D47A1), size: 20),
+                    const SizedBox(width: 10),
+                    Text("Afdeling $afd", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: primaryBlue)),
+                    const SizedBox(width: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                      decoration: BoxDecoration(color: primaryBlue.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+                      child: Text("${groupedData[afd]!.length} Records", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: primaryBlue)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Grid Data (Hanya render yang terlihat di layar)
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 30),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 4,
+                  crossAxisSpacing: 15,
+                  mainAxisSpacing: 15,
+                  mainAxisExtent: 180,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => _dataCard(groupedData[afd]![index]),
+                  childCount: groupedData[afd]!.length,
+                ),
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 35)),
+          ]),
       ],
+    );
+  }
+
+  // Pisahkan Header agar kode lebih bersih
+  Widget _buildWebDataHeader() {
+    return Container(
+      padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [BoxShadow(color: cardShadow, blurRadius: 20, offset: const Offset(0, 8))],
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("Monitoring Data Panen Terkini", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Row(
+                children: [
+                  _filterDropdown<String?>(
+                    value: selectedAfdeling,
+                    hint: "Semua AFD",
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text("Semua AFD")),
+                      ...afdelings.map((a) => DropdownMenuItem(value: a, child: Text(a))),
+                    ],
+                    onChanged: (v) { setState(() => selectedAfdeling = v); applyFilter(); },
+                  ),
+                  const SizedBox(width: 8),
+                  _filterDropdown<int?>(
+                    value: selectedMonth,
+                    hint: "Semua",
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text("Semua")),
+                      ...List.generate(12, (i) => DropdownMenuItem(value: i + 1, child: Text(months[i]))),
+                    ],
+                    onChanged: (v) { setState(() => selectedMonth = v); applyFilter(); },
+                  ),
+                  const SizedBox(width: 8),
+                  _filterDropdown<int?>(
+                    value: selectedYear,
+                    hint: "Semua",
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text("Semua")),
+                      ...years.map((y) => DropdownMenuItem(value: y, child: Text(y.toString()))),
+                    ],
+                    onChanged: (v) { setState(() => selectedYear = v); applyFilter(); },
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: Icon(Icons.calendar_month, color: primaryBlue), 
+                    onPressed: _pickDate
+                  ),
+                  const SizedBox(width: 15),
+                  exportButton("PDF", const Color(0xFFEF5350), Icons.picture_as_pdf),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          TextField(
+            onChanged: _applySearch,
+            decoration: InputDecoration(
+              hintText: "Cari Pemanen atau Blok...",
+              prefixIcon: const Icon(Icons.search, color: Color(0xFF0D47A1)),
+              filled: true,
+              fillColor: bgGrey,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey.withValues(alpha: 0.1)),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2533,8 +2637,8 @@ class _DashboardAdminState extends State<DashboardAdmin> {
   Widget recentActivityWidget() {
     List<Map<String, dynamic>> activities = [];
 
-    // Ambil 5 panen terbaru
-    for (var item in allData.take(5)) {
+    // Ambil 10 panen terbaru untuk diseleksi
+    for (var item in allData.take(10)) {
       int mentah = int.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
       String timeStr = item['waktu'] ?? item['tanggal'] ?? "";
       
@@ -2550,27 +2654,31 @@ class _DashboardAdminState extends State<DashboardAdmin> {
 
       activities.add({
         'title': "Panen Baru",
-        'desc': "${item['pemanen']} kirim data Blok ${item['blok']}",
+        'desc': "${item['pemanen'] ?? 'Pemanen'} kirim data Blok ${item['blok'] ?? '-'}",
         'time': _formatActivityTime(timeStr),
         'color': primaryBlue,
         'rawTime': timeStr,
       });
     }
 
-    // Ambil 5 trip PKS terbaru
-    for (var item in allPksData.take(5)) {
-      String timeStr = item['waktu_timbang']?.toString() ?? item['trip_tanggal']?.toString() ?? "";
+    // Ambil 10 trip PKS terbaru
+    for (var item in allPksData.take(10)) {
+      String timeStr = item['waktu_timbang']?.toString() ?? item['tanggal']?.toString() ?? "";
       activities.add({
         'title': "Trip Selesai",
-        'desc': "Truk #${item['trip_id'] ?? 'ID'} tiba di ${item['pks_nama'] ?? 'PKS'}",
+        'desc': "Truk #${item['trip_id'] ?? item['no_tiket'] ?? 'ID'} tiba di ${item['pks_nama'] ?? 'PKS'}",
         'time': _formatActivityTime(timeStr),
-        'color': Colors.blue,
+        'color': Colors.green,
         'rawTime': timeStr,
       });
     }
 
     // Urutkan berdasarkan waktu terbaru (rawTime)
-    activities.sort((a, b) => b['rawTime'].compareTo(a['rawTime']));
+    activities.sort((a, b) {
+      String timeA = a['rawTime']?.toString() ?? "";
+      String timeB = b['rawTime']?.toString() ?? "";
+      return timeB.compareTo(timeA);
+    });
     
     // Batasi 6 aktivitas saja yang tampil
     var displayActivities = activities.take(6).toList();
@@ -2902,7 +3010,6 @@ class _DashboardAdminState extends State<DashboardAdmin> {
 
   Widget _dataCard(Map<String, dynamic> item) {
     String status = item['status'] ?? item['sync_status'] ?? "pending";
-    String fotoStr = item['foto']?.toString() ?? "";
     
     return Container(
       decoration: BoxDecoration(
@@ -2934,7 +3041,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
                     child: SizedBox(
                       width: 70,
                       height: 70,
-                      child: _buildThumbnail(fotoStr),
+                      child: _buildThumbnail(item),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -3064,9 +3171,13 @@ class _DashboardAdminState extends State<DashboardAdmin> {
       int totalMentah = 0;
       double totalBron = 0;
       for (var item in data) {
-        totalMatang += int.tryParse(item['matang']?.toString() ?? "0") ?? 0;
-        totalMentah += int.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
-        totalBron += double.tryParse(item['brondolan']?.toString() ?? "0") ?? 0;
+        // Hanya hitung data yang ACC untuk konsistensi dengan dashboard
+        String status = (item['status'] ?? item['sync_status'] ?? "").toString().toUpperCase();
+        if (status == "ACC") {
+          totalMatang += int.tryParse(item['matang']?.toString() ?? "0") ?? 0;
+          totalMentah += int.tryParse(item['mentah']?.toString() ?? "0") ?? 0;
+          totalBron += double.tryParse(item['brondolan']?.toString() ?? "0") ?? 0;
+        }
       }
 
       pdf.addPage(
@@ -3207,19 +3318,42 @@ class _DashboardAdminState extends State<DashboardAdmin> {
 
 
   // ================= SIDEBAR HELPERS =================
-  Widget _buildThumbnail(String path) {
+  Widget _buildThumbnail(Map<String, dynamic> item) {
+    final path = (item['foto'] ?? "").toString();
+    
+    // 1. Prioritaskan Bytes Cache (Sangat Cepat - Tanpa Decode saat Scroll)
+    if (item['foto_bytes'] != null) {
+      return Image(
+        image: ResizeImage(
+          MemoryImage(item['foto_bytes']),
+          width: 120, // Thumbnail resolution
+        ),
+        width: 60,
+        height: 60,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.low,
+        errorBuilder: (c, e, s) => _buildPlaceholder(icon: Icons.broken_image),
+      );
+    }
+
     if (path.isEmpty) return _buildPlaceholder();
 
-    // 1. Handle Base64
+    // 2. Handle Base64 Fallback (Jika cache belum siap)
     if (path.startsWith('data:image') || (path.length > 500 && !path.startsWith('http'))) {
       try {
         final base64Data = path.contains(',') ? path.split(',').last : path;
         final cleanBase64 = base64Data.replaceAll(RegExp(r'\s+'), '');
-        return Image.memory(
-          base64Decode(cleanBase64),
+        final bytes = base64Decode(cleanBase64);
+        
+        return Image(
+          image: ResizeImage(
+            MemoryImage(bytes),
+            width: 120,
+          ),
           width: 60,
           height: 60,
           fit: BoxFit.cover,
+          filterQuality: FilterQuality.low,
           errorBuilder: (c, e, s) => _buildPlaceholder(icon: Icons.broken_image),
         );
       } catch (e) {
@@ -3227,7 +3361,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
       }
     }
 
-    // 2. Handle URL
+    // 3. Handle URL
     if (path.startsWith('http')) {
       return Image.network(
         path,
@@ -3238,7 +3372,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
       );
     }
 
-    // 3. Fallback Web (Laravel Storage) untuk path lokal lama
+    // 4. Fallback Web (Laravel Storage)
     if (kIsWeb) {
       String fileName = path.split(RegExp(r'[/\\]')).last;
       String baseUrl = ApiService.baseUrl.replaceAll('/api', '');
@@ -3251,11 +3385,12 @@ class _DashboardAdminState extends State<DashboardAdmin> {
       );
     }
 
-    // 4. Mobile Local File
+    // 5. Mobile Local File
     return Image.file(
       File(path),
       width: 60,
       height: 60,
+      cacheWidth: 120,
       fit: BoxFit.cover,
       errorBuilder: (c, e, s) => _buildPlaceholder(icon: Icons.broken_image),
     );
