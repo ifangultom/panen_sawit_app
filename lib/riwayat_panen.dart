@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -8,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
+import 'utils/date_utils.dart';
 import 'database_helper.dart';
 import 'input_panen.dart';
 
@@ -25,6 +27,8 @@ class _RiwayatPanenPageState extends State<RiwayatPanenPage> {
   String kcsLogin = "";
   DateTime filterTanggal = DateTime.now();
 
+  bool isLoading = false;
+
   @override
   void initState() {
     super.initState();
@@ -32,64 +36,169 @@ class _RiwayatPanenPageState extends State<RiwayatPanenPage> {
   }
 
   Future<void> loadUser() async {
+    setState(() => isLoading = true);
     final prefs = await SharedPreferences.getInstance();
-    kcsLogin = prefs.getString('kcs_login') ?? "KCS1";
-    // 🔥 pastikan loadData pakai kcs yang sudah diset
+    final String user = prefs.getString('current_user') ?? "";
+    String kcs = prefs.getString('kcs_login') ?? "";
+    String afd = prefs.getString('afd_login') ?? "";
+
+    if (afd.isEmpty) {
+      afd = prefs.getString('afdeling_$user') ?? "";
+      if (afd.isEmpty && kcs.isNotEmpty) afd = AppDateUtils.mapKcsToAfd(kcs);
+      if (afd.isNotEmpty) await prefs.setString('afd_login', afd);
+    }
+
+    setState(() {
+      kcsLogin = kcs;
+    });
     await loadData();
   }
 
   Future<void> loadData() async {
+    if (!mounted) return;
+    setState(() => isLoading = true);
+    
     final prefs = await SharedPreferences.getInstance();
     final String user = prefs.getString('current_user') ?? "";
-    final String roleUser = prefs.getString('role_$user') ?? "";
-    final String afdelingUser = prefs.getString('afd_login') ?? "";
-    if (kcsLogin.isEmpty) kcsLogin = prefs.getString('kcs_login') ?? "KCS1";
+    final String roleUser = (prefs.getString('role_$user') ?? "").toUpperCase();
+    String kcs = prefs.getString('kcs_login') ?? "";
+    String afd = prefs.getString('afd_login') ?? "";
+    
+    final String afdFromPrefs = afd.isNotEmpty ? afd : kcs;
+    final String afdNormalized = AppDateUtils.mapKcsToAfd(afdFromPrefs);
 
-    final tgl = filterTanggal.toString().split(" ")[0];
+    final List<String> patterns = AppDateUtils.getDateSearchPatterns(filterTanggal);
+    
     List<Map<String, dynamic>> temp = [];
 
     try {
-      final connectivity = await Connectivity().checkConnectivity();
-      if (connectivity != ConnectivityResult.none) {
-        // 🔥 ONLINE: baca Firebase - lintas HP
-        Query query = FirebaseFirestore.instance.collection('panen')
-            .where('tanggal', isGreaterThanOrEqualTo: tgl)
-            .where('tanggal', isLessThan: tgl + 'Z')
-            .orderBy('tanggal', descending: true);
-        if (roleUser != "ADMIN" && afdelingUser != "ALL" && afdelingUser.isNotEmpty) {
-          query = query.where('afdeling', isEqualTo: afdelingUser);
+      debugPrint("DEBUG: loadData for $afdNormalized (${patterns.first})");
+      // 1. Load Local
+      final localData = await _loadDataOffline(roleUser, afdNormalized);
+      debugPrint("DEBUG: Local data count: ${localData.length}");
+      
+      final connectivityResult = await Connectivity().checkConnectivity();
+      bool isOnline = connectivityResult != ConnectivityResult.none;
+
+      if (isOnline) {
+        // 2. Fetch Online (Query semua pola secara paralel + Fallback Timestamp)
+        final List<Future<QuerySnapshot>> futures = patterns.map((p) => 
+          FirebaseFirestore.instance.collection('panen')
+            .where('tanggal', isGreaterThanOrEqualTo: p)
+            .where('tanggal', isLessThan: p + 'z')
+            .get()
+            .timeout(const Duration(seconds: 10))
+        ).toList();
+
+        // Tambahkan query Timestamp jika tanggal tersimpan sebagai object Timestamp
+        final start = DateTime(filterTanggal.year, filterTanggal.month, filterTanggal.day);
+        final end = start.add(const Duration(days: 1));
+        futures.add(
+          FirebaseFirestore.instance.collection('panen')
+            .where('tanggal', isGreaterThanOrEqualTo: start)
+            .where('tanggal', isLessThan: end)
+            .get()
+            .timeout(const Duration(seconds: 10))
+        );
+        
+        final snapshots = await Future.wait(futures);
+        
+        List<Map<String, dynamic>> onlineDataRaw = [];
+        for (var snap in snapshots) {
+          for (var doc in snap.docs) {
+            final d = Map<String, dynamic>.from(doc.data() as Map);
+            d['firebase_id'] = doc.id;
+            onlineDataRaw.add(d);
+          }
         }
-        final snapshot = await query.get();
-        temp = snapshot.docs.map((doc) {
-          final d = Map<String, dynamic>.from(doc.data() as Map);
-          d['firebase_id'] = doc.id;
-          d['id'] = d['local_id'] ?? doc.id.hashCode.abs();
-          return d;
-        }).toList();
+        debugPrint("DEBUG: Online data raw count: ${onlineDataRaw.length}");
+        
+        // 3. Client-side Filtering & De-duplication
+        Map<String, Map<String, dynamic>> combined = {};
+        
+        // Masukkan data lokal dulu
+        for (var d in localData) {
+          String u = (d['user'] ?? user).toString();
+          String key = d['firebase_id'] ?? d['doc_id'] ?? "${u}_${d['id']}";
+          combined[key] = Map<String, dynamic>.from(d);
+        }
+        
+        // Masukkan data online (Filter afdeling di sini)
+        int filteredCount = 0;
+        for (var d in onlineDataRaw) {
+          // Filter Wilayah untuk non-admin
+          if (roleUser != "ADMIN" && afdNormalized != "ALL" && afdNormalized.isNotEmpty) {
+            String rawAfd = (d['afdeling'] ?? "").toString();
+            if (rawAfd.isEmpty) rawAfd = (d['kcs'] ?? "").toString();
+            
+            String itemAfd = AppDateUtils.mapKcsToAfd(rawAfd);
+            if (itemAfd != afdNormalized) {
+              filteredCount++;
+              continue; // Skip jika tidak cocok
+            }
+          }
+
+          String oUser = (d['user'] ?? "").toString();
+          String oLocalId = (d['local_id'] ?? d['id'] ?? "").toString();
+          String firebaseId = d['firebase_id'] ?? "";
+          String localKey = "${oUser}_$oLocalId";
+          
+          if (firebaseId.isNotEmpty && combined.containsKey(firebaseId)) {
+            var localId = combined[firebaseId]!['id'];
+            combined[firebaseId] = Map<String, dynamic>.from(d);
+            combined[firebaseId]!['id'] = localId;
+            combined[firebaseId]!['sync_status'] = 'synced';
+          } else if (localKey.length > 2 && combined.containsKey(localKey)) {
+            var localId = combined[localKey]!['id'];
+            combined[localKey] = Map<String, dynamic>.from(d);
+            combined[localKey]!['id'] = localId;
+            combined[localKey]!['sync_status'] = 'synced';
+          } else {
+            String key = firebaseId.isNotEmpty ? firebaseId : localKey;
+            d['id'] = d['id'] ?? d['local_id'] ?? key.hashCode.abs();
+            d['sync_status'] = 'synced';
+            combined[key] = Map<String, dynamic>.from(d);
+          }
+        }
+        debugPrint("DEBUG: Online filtered out: $filteredCount");
+        temp = combined.values.toList();
       } else {
-        // 📱 OFFLINE: SQLite lokal
-        final db = await DatabaseHelper.instance.database;
-        if (roleUser == "ADMIN" || afdelingUser == "ALL") {
-          temp = await db.query('panen', where: 'substr(tanggal,1,10) = ? AND (sync_status IS NULL OR sync_status != "synced")', whereArgs: [tgl], orderBy: 'id DESC');
-        } else {
-          temp = await db.query('panen', where: 'afdeling = ? AND substr(tanggal,1,10) = ? AND (sync_status IS NULL OR sync_status != "synced")', whereArgs: [afdelingUser, tgl], orderBy: 'id DESC');
-        }
+        temp = localData;
       }
     } catch (e) {
-      print("Firebase error, fallback SQLite: $e");
-      final db = await DatabaseHelper.instance.database;
-      // 🔥 Filter out synced records in fallback
-      if (roleUser == "ADMIN" || afdelingUser == "ALL") {
-        temp = await db.query('panen', where: 'substr(tanggal,1,10) = ? AND (sync_status IS NULL OR sync_status != "synced")', whereArgs: [tgl], orderBy: 'id DESC');
-      } else {
-        temp = await db.query('panen', where: 'afdeling = ? AND substr(tanggal,1,10) = ? AND (sync_status IS NULL OR sync_status != "synced")', whereArgs: [afdelingUser, tgl], orderBy: 'id DESC');
-      }
+      debugPrint("RiwayatPanen Error: $e");
+      temp = await _loadDataOffline(roleUser, afdNormalized);
     }
+
+    if (!mounted) return;
+    temp.sort((a, b) => (b['tanggal'] ?? "").toString().compareTo((a['tanggal'] ?? "").toString()));
 
     setState(() {
       data = temp;
       selected = data.isNotEmpty ? Map<String, dynamic>.from(data.first) : null;
+      isLoading = false;
     });
+  }
+
+  Future<List<Map<String, dynamic>>> _loadDataOffline(String roleUser, String afdNormalized) async {
+    final db = await DatabaseHelper.instance.database;
+    final List<String> patterns = AppDateUtils.getDateSearchPatterns(filterTanggal);
+    
+    // Ambil SEMUA data dulu, baru filter di memori agar konsisten
+    final allLocal = await db.query('panen', orderBy: 'id DESC');
+    
+    return allLocal.where((e) {
+      // Filter Tanggal
+      String tglRaw = (e['tanggal'] ?? "").toString();
+      bool matchDate = patterns.any((p) => tglRaw.startsWith(p));
+      if (!matchDate) return false;
+
+      // Filter Afdeling
+      if (roleUser == "ADMIN" || afdNormalized == "ALL" || afdNormalized.isEmpty) return true;
+      
+      String itemAfd = AppDateUtils.mapKcsToAfd(e['afdeling']?.toString() ?? e['kcs']?.toString() ?? "");
+      return itemAfd == afdNormalized;
+    }).map((e) => Map<String, dynamic>.from(e)).toList();
   }
   Future<void> _pilihTanggal() async {
     final picked = await showDatePicker(
@@ -215,15 +324,28 @@ class _RiwayatPanenPageState extends State<RiwayatPanenPage> {
           ),
 
           Expanded(
-            child: data.isEmpty
-                ? _emptyState()
-                : SingleChildScrollView(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                children: [
-
-                  // ===== LIST KARTU =====
-                  ...data.map((d) {
+            child: isLoading 
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFF0D47A1)))
+                : data.isEmpty
+                ? RefreshIndicator(
+                    onRefresh: loadData,
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      child: SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.6,
+                        child: _emptyState(),
+                      ),
+                    ),
+                  )
+                : RefreshIndicator(
+                    onRefresh: loadData,
+                    color: const Color(0xFF0D47A1),
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.all(12),
+                      children: [
+                        // ===== LIST KARTU =====
+                        ...data.map((d) {
                     final isSelected = selected != null && selected!['id'] == d['id'];
                     final janjang = hitungJanjang(d);
                     final gps = hasGps(d);
@@ -356,9 +478,44 @@ class _RiwayatPanenPageState extends State<RiwayatPanenPage> {
     );
   }
 
+  Widget _buildFotoWidget(String? path, {required double size, double? height}) {
+    if (path == null || path.isEmpty) {
+      return Container(
+        width: size,
+        height: height ?? size,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF0D1B4B), Color(0xFF0D47A1)],
+          ),
+        ),
+        child: const Icon(Icons.photo_camera, color: Colors.white38, size: 28),
+      );
+    }
+
+    if (path.startsWith('data:image')) {
+      try {
+        final base64Data = path.split(',').last.replaceAll(RegExp(r'\s+'), '');
+        return Image.memory(base64Decode(base64Data), width: size, height: height ?? size, fit: BoxFit.cover);
+      } catch (_) {
+        return Container(width: size, height: height ?? size, color: Colors.black, child: const Icon(Icons.broken_image, color: Colors.white38));
+      }
+    }
+    
+    if (path.startsWith('http')) {
+      return Image.network(path, width: size, height: height ?? size, fit: BoxFit.cover, 
+        errorBuilder: (c, e, s) => Container(width: size, height: height ?? size, color: Colors.black, child: const Icon(Icons.broken_image, color: Colors.white38)));
+    }
+
+    return Image.file(File(path), width: size, height: height ?? size, fit: BoxFit.cover, 
+      errorBuilder: (c, e, s) => Container(width: size, height: height ?? size, color: Colors.black, child: const Icon(Icons.broken_image, color: Colors.white38)));
+  }
+
   // ===== FOTO DENGAN TIMESTAMP STYLE =====
   Widget _fotoTimestamp(Map<String, dynamic> d) {
-    final hasFoto = (d['foto'] ?? "").toString().isNotEmpty;
+    final path = (d['foto'] ?? "").toString();
+    final hasFoto = path.isNotEmpty;
     final tanggalRaw = d['tanggal'] ?? "";
     String jam = "";
     try {
@@ -368,7 +525,7 @@ class _RiwayatPanenPageState extends State<RiwayatPanenPage> {
 
     return GestureDetector(
       onTap: hasFoto ? () => Navigator.push(context,
-          MaterialPageRoute(builder: (_) => FullImagePage(imagePath: d['foto'], tanggal: tanggalRaw, lat: d['latitude'] ?? "", lng: d['longitude'] ?? "")))
+          MaterialPageRoute(builder: (_) => FullImagePage(imagePath: path, tanggal: tanggalRaw, lat: d['latitude'] ?? "", lng: d['longitude'] ?? "")))
           : null,
       child: Container(
         width: 72,
@@ -382,19 +539,7 @@ class _RiwayatPanenPageState extends State<RiwayatPanenPage> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // Foto atau background gelap
-              hasFoto
-                  ? Image.file(File(d['foto']), fit: BoxFit.cover)
-                  : Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFF0D1B4B), Color(0xFF0D47A1)],
-                  ),
-                ),
-                child: const Icon(Icons.photo_camera, color: Colors.white38, size: 28),
-              ),
+              _buildFotoWidget(path, size: 72),
 
               // Overlay gradient bawah untuk timestamp
               Positioned(
@@ -612,7 +757,8 @@ class _RiwayatPanenPageState extends State<RiwayatPanenPage> {
 
   // ===== FOTO BESAR TIMESTAMP STYLE =====
   Widget _fotoBesarTimestamp(Map<String, dynamic> d) {
-    final hasFoto = (d['foto'] ?? "").toString().isNotEmpty;
+    final path = (d['foto'] ?? "").toString();
+    final hasFoto = path.isNotEmpty;
     final tanggalRaw = d['tanggal'] ?? "";
     final lat = d['latitude'] ?? "";
     final lng = d['longitude'] ?? "";
@@ -638,22 +784,7 @@ class _RiwayatPanenPageState extends State<RiwayatPanenPage> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Foto atau background
-            hasFoto
-                ? Image.file(File(d['foto']), fit: BoxFit.cover)
-                : Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF0D1B4B), Color(0xFF0D47A1)],
-                ),
-              ),
-              child: const Center(
-                child: Icon(Icons.photo_camera_outlined,
-                    color: Colors.white38, size: 60),
-              ),
-            ),
+            _buildFotoWidget(path, size: double.infinity, height: 200),
 
             // Overlay gelap bawah
             Positioned(
@@ -924,7 +1055,7 @@ class FullImagePage extends StatelessWidget {
           InteractiveViewer(
             minScale: 0.5,
             maxScale: 4,
-            child: Image.file(File(imagePath), fit: BoxFit.contain),
+            child: _buildFullImage(imagePath),
           ),
 
           // Timestamp overlay bawah
@@ -974,6 +1105,21 @@ class FullImagePage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Widget _buildFullImage(String path) {
+    if (path.startsWith('data:image')) {
+      try {
+        final base64Data = path.split(',').last.replaceAll(RegExp(r'\s+'), '');
+        return Image.memory(base64Decode(base64Data), fit: BoxFit.contain);
+      } catch (_) {
+        return const Center(child: Icon(Icons.broken_image, color: Colors.white38, size: 64));
+      }
+    }
+    if (path.startsWith('http')) {
+      return Image.network(path, fit: BoxFit.contain);
+    }
+    return Image.file(File(path), fit: BoxFit.contain);
   }
 }
 

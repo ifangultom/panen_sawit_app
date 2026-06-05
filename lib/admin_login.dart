@@ -32,11 +32,11 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text("LOGIN ADMIN", style: TextStyle(fontSize: 20)),
+              Text("MASUK ADMIN", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               TextField(controller: email, decoration: InputDecoration(labelText: "Email")),
-              TextField(controller: password, obscureText: true, decoration: InputDecoration(labelText: "Password")),
+              TextField(controller: password, obscureText: true, decoration: InputDecoration(labelText: "Kata Sandi")),
               SizedBox(height: 20),
-              ElevatedButton(onPressed: login, child: Text("Login"))
+              ElevatedButton(onPressed: login, child: Text("Masuk"))
             ],
           ),
         ),

@@ -29,15 +29,15 @@ class AppDateUtils {
     return null;
   }
 
-  static String mapKcsToAfd(String? kcs) {
-    if (kcs == null) return "";
-    final cleanKcs = kcs.toUpperCase().trim();
-    if (cleanKcs.contains("KCS1")) return "AFD1";
-    if (cleanKcs.contains("KCS2")) return "AFD2";
-    if (cleanKcs.contains("KCS3")) return "AFD3";
-    // Fallback if it already looks like AFD
-    if (cleanKcs.contains("AFD")) return cleanKcs;
-    return cleanKcs;
+  static String mapKcsToAfd(String? input) {
+    if (input == null) return "";
+    // Normalisasi: Huruf besar, tanpa spasi
+    String res = input.toUpperCase().replaceAll(' ', '').trim();
+    // Jika mengandung KCS, ubah jadi AFD (misal KCS 1 -> AFD1, KCS2 -> AFD2)
+    if (res.contains("KCS")) {
+      res = res.replaceAll("KCS", "AFD");
+    }
+    return res;
   }
 
   static bool isWithinFilter(DateTime? dt, DateTime? startDate, DateTime? endDate, int? selectedMonth, int? selectedYear) {
@@ -54,5 +54,20 @@ class AppDateUtils {
     if (selectedYear != null && dt.year != selectedYear) return false;
 
     return true;
+  }
+
+  /// Membantu menstandarkan pencarian tanggal untuk query SQLite
+  /// Mengembalikan list string berisi kemungkinan format yang tersimpan (ISO dan Lokal)
+  static List<String> getDateSearchPatterns(DateTime dt) {
+    String y = dt.year.toString();
+    String m = dt.month.toString().padLeft(2, '0');
+    String d = dt.day.toString().padLeft(2, '0');
+    
+    return [
+      "$y-$m-$d", // 2023-10-27
+      "$d-$m-$y", // 27-10-2023
+      "$y/$m/$d", // 2023/10/27
+      "$d/$m/$y", // 27/10/2023
+    ];
   }
 }

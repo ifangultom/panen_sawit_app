@@ -5,10 +5,12 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
+import 'utils/date_utils.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
+  bool _isSyncing = false; // Flag untuk mencegah double sync
 
   DatabaseHelper._init();
 
@@ -25,7 +27,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 9,
+      version: 10,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -33,27 +35,41 @@ class DatabaseHelper {
 
   Future<void> kirimKeLaravel(Map<String, dynamic> data) async {
     try {
+      // Gunakan doc_id sebagai identifier unik untuk mencegah duplikasi di sisi server
+      final String externalId = data['doc_id'] ?? "${data['user']}_${data['id']}";
+      
       final response = await http.post(
         Uri.parse("http://10.0.2.2:8000/api/panen"),
         headers: {
           "Accept": "application/json",
+          "Content-Type": "application/x-www-form-urlencoded",
         },
         body: {
+          "external_id": externalId,
           "pemanen": data['pemanen'].toString(),
           "blok": data['blok'].toString(),
+          "tph": (data['tph'] ?? "").toString(),
+          "thn_tanam": (data['thn_tanam'] ?? "").toString(),
           "matang": data['matang'].toString(),
           "mentah": data['mentah'].toString(),
           "brondolan": data['brondolan'].toString(),
           "kcs": data['kcs'].toString(),
           "afdeling": data['afdeling'].toString(),
           "tanggal": data['tanggal'].toString(),
+          "waktu": (data['waktu'] ?? "").toString(),
+          "latitude": data['latitude'].toString(),
+          "longitude": data['longitude'].toString(),
+          "user": data['user'].toString(),
+          "mandor": data['mandor'].toString(),
+          "status": (data['status'] ?? "pending").toString(),
+          "catatan": (data['catatan'] ?? "").toString(),
         },
-      );
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        print("✅ Laravel sync berhasil");
+        print("✅ Laravel sync berhasil: $externalId");
       } else {
-        print("❌ Laravel error: ${response.body}");
+        print("⚠️ Laravel response (${response.statusCode}): ${response.body}");
       }
     } catch (e) {
       print("❌ Gagal kirim ke Laravel: $e");
@@ -83,7 +99,8 @@ class DatabaseHelper {
         user TEXT,
         mandor TEXT,
         sync_status TEXT,
-        status TEXT
+        status TEXT,
+        doc_id TEXT
       )
     ''');
 
@@ -179,9 +196,9 @@ class DatabaseHelper {
         )
       ''');
     }
-    if (oldVersion < 9) {
+    if (oldVersion < 10) {
       try {
-        await db.execute("ALTER TABLE panen ADD COLUMN waktu TEXT");
+        await db.execute("ALTER TABLE panen ADD COLUMN doc_id TEXT");
       } catch (_) {}
     }
   }
@@ -229,31 +246,38 @@ class DatabaseHelper {
     // 🔥 Coba kirim langsung ke Firebase jika sedang online
     try {
       final user = data['user'] ?? 'unknown';
-      final docId = "${user}_$id"; 
+      final String docId = "${user}_$id"; 
 
-      // Buat copy data untuk Firebase agar tidak merubah data asli (yang berisi path)
+      // Buat copy data untuk Firebase agar tidak merubah data asli
       Map<String, dynamic> syncData = Map.from(data);
+      syncData['doc_id'] = docId; // Tambahkan doc_id untuk identifikasi unik
       
-      // Konversi Path ke Base64 untuk Web Admin jika kolom foto berisi path lokal
+      // ... pemrosesan foto ...
       if (syncData['foto'] != null && syncData['foto'].isNotEmpty && !syncData['foto'].startsWith('data:image')) {
         File f = File(syncData['foto']);
         if (await f.exists()) {
           int fileSize = await f.length();
-          if (fileSize < 800000) { // Hanya kirim jika < 800KB (Base64 akan membengkak ke ~1MB)
+          if (fileSize < 800000) {
             List<int> imageBytes = await f.readAsBytes();
             syncData['foto'] = "data:image/jpeg;base64,${base64Encode(imageBytes)}";
           } else {
-            syncData['foto'] = ""; // Kosongkan foto jika terlalu besar agar data teks tetap masuk
-            print("⚠️ Foto terlalu besar (${(fileSize/1024/1024).toStringAsFixed(2)}MB), mengirim data tanpa foto.");
+            syncData['foto'] = "";
           }
         }
       }
 
+      // Gunakan doc().set() untuk mencegah duplikasi (Upsert)
       await FirebaseFirestore.instance.collection('panen').doc(docId).set(syncData);
       
-      // Jika sukses, langsung tandai sudah sync
-      await db.update('panen', {'sync_status': 'synced'}, where: 'id = ?', whereArgs: [id]);
-      print("✅ Data otomatis tersinkron ke Firebase (ID: $docId)");
+      // Kirim ke Laravel juga agar data sinkron di semua platform
+      kirimKeLaravel(syncData).catchError((e) => print("Laravel skip: $e"));
+      
+      // Jika sukses, tandai sudah sync dan simpan doc_id secara lokal
+      await db.update('panen', {
+        'sync_status': 'synced',
+        'doc_id': docId
+      }, where: 'id = ?', whereArgs: [id]);
+      print("✅ Auto-sync sukses: $docId");
     } catch (e) {
       print("ℹ️ Mode offline: Data disimpan lokal (ID: $id)");
     }
@@ -328,24 +352,37 @@ class DatabaseHelper {
     }
   }
 
-  // ================= GET PANEN BY KCS & TANGGAL =================
   Future<List<Map<String, dynamic>>> getPanenByKcsAndTanggal(
-      String kcs,
-      String tanggal,
-      ) async {
+    String kcs,
+    String tanggal, // Format: YYYY-MM-DD
+  ) async {
     final db = await database;
+    String afd = AppDateUtils.mapKcsToAfd(kcs);
+    
+    // Ambil semua pola tanggal yang mungkin (ISO, Lokal, dll)
+    DateTime? dt = AppDateUtils.parseDate(tanggal);
+    List<String> patterns = [];
+    
+    if (dt != null) {
+      patterns = AppDateUtils.getDateSearchPatterns(dt);
+    } else {
+      patterns = [tanggal, tanggal.replaceAll('-', '/')];
+    }
 
+    // Bangun query dinamis untuk pola tanggal
+    String dateConditions = patterns.map((p) => "tanggal LIKE '$p%'").join(" OR ");
+
+    // Gunakan TRIM dan UPPER untuk perbandingan yang lebih aman
     return await db.rawQuery('''
     SELECT * FROM panen
-    WHERE kcs = ?
-    AND status = 'ACC'
-    AND substr(tanggal,1,10) = ?
-    AND (sync_status IS NULL OR sync_status != 'synced')
+    WHERE (TRIM(UPPER(kcs)) = ? OR TRIM(UPPER(afdeling)) = ?)
+    AND TRIM(UPPER(status)) = 'ACC'
+    AND ($dateConditions)
     AND id NOT IN (
       SELECT panen_id FROM trip_detail
     )
     ORDER BY id DESC
-  ''', [kcs, tanggal]);
+  ''', [kcs.toUpperCase().trim(), afd.toUpperCase().trim()]);
   }
   // ================= AMBIL DATA HARVESTERS & BLOCKS DARI FIREBASE =================
   Future<void> syncHarvesters() async {
@@ -439,14 +476,33 @@ class DatabaseHelper {
 
       for (var doc in snapshot.docs) {
         Map<String, dynamic> data = Map.from(doc.data());
+        String remoteDocId = doc.id;
+        
         // 🔥 FORCE STATUS: Jika data ada di Firebase, maka statusnya HARUS 'synced'
         data['sync_status'] = 'synced';
+        data['doc_id'] = remoteDocId;
         
-        await db.insert(
-          'panen',
-          data,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        // Cek apakah record ini sudah ada di lokal berdasarkan doc_id
+        final existing = await db.query('panen', where: 'doc_id = ?', whereArgs: [remoteDocId]);
+        
+        if (existing.isNotEmpty) {
+          // Update data yang sudah ada (kecuali id internal)
+          int localId = existing.first['id'] as int;
+          data.remove('id'); 
+          await db.update('panen', data, where: 'id = ?', whereArgs: [localId]);
+        } else {
+          // Insert data baru (biarkan SQLite generate id baru jika id dari firebase bentrok)
+          // Namun, jika data Firestore punya ID dan kita ingin tetap menjaga konsistensi 
+          // (misal untuk trip_detail), kita coba insert dengan ID tersebut tapi handle conflict.
+          
+          try {
+            await db.insert('panen', data, conflictAlgorithm: ConflictAlgorithm.ignore);
+          } catch (e) {
+            // Jika ID bentrok, hapus ID dan biarkan auto-increment
+            data.remove('id');
+            await db.insert('panen', data);
+          }
+        }
       }
       print("✅ Berhasil menarik ${snapshot.docs.length} data dari Firebase");
     } catch (e) {
@@ -456,23 +512,37 @@ class DatabaseHelper {
 
   // ================= SYNC KE FIREBASE =================
   Future<void> syncData() async {
-    final db = await database;
+    if (_isSyncing) {
+      print("⚠️ Sinkronisasi sedang berjalan, mengabaikan permintaan baru.");
+      return;
+    }
+    _isSyncing = true;
 
-    // 1. Sync Panen
-    final dataList = await db.query(
-      'panen',
-      where: "sync_status IS NULL OR sync_status = 'offline' OR sync_status = 'update' OR sync_status != 'synced'",
-    );
+    try {
+      final db = await database;
 
-    for (var data in dataList) {
-      try {
-        final Map<String, dynamic> dataMap = Map.from(data);
-        final id = dataMap['id'];
-        final user = dataMap['user'] ?? 'unknown';
-        final String docId = "${user}_$id";
+      // 1. Sync Panen - Ambil hanya yang belum 'synced'
+      final dataList = await db.query(
+        'panen',
+        where: "sync_status IS NULL OR sync_status != 'synced'",
+      );
 
-        Map<String, dynamic> uploadMap = Map.from(dataMap);
-        uploadMap['sync_status'] = 'synced';
+      for (var data in dataList) {
+        try {
+          final Map<String, dynamic> dataMap = Map.from(data);
+          final id = dataMap['id'];
+          final user = dataMap['user'] ?? 'unknown';
+          final String docId = "${user}_$id";
+
+          Map<String, dynamic> uploadMap = Map.from(dataMap);
+          uploadMap['doc_id'] = docId; // Tambahkan doc_id ke map
+          uploadMap['sync_status'] = 'synced';
+        
+        // 🔥 MIGRATION: Pastikan field afdeling terisi sebelum sync menggunakan helper terpusat
+        if (uploadMap['afdeling'] == null || uploadMap['afdeling'].toString().isEmpty) {
+          uploadMap['afdeling'] = AppDateUtils.mapKcsToAfd(uploadMap['kcs']?.toString());
+        }
+
         // Pastikan status juga ikut terkirim jika sudah di-ACC/REJECT secara lokal
         if (uploadMap['status'] == null) {
           uploadMap['status'] = 'pending';
@@ -493,11 +563,19 @@ class DatabaseHelper {
           }
         }
 
+        // 1. Upload ke Firebase (Upsert berdasarkan docId)
         await FirebaseFirestore.instance.collection('panen').doc(docId).set(uploadMap);
+        
+        // 2. Update status lokal SEGERA setelah Firebase berhasil untuk mencegah re-sync
+        await db.update('panen', {
+          'sync_status': 'synced',
+          'doc_id': docId
+        }, where: 'id = ?', whereArgs: [id]);
+        
+        // 3. Kirim ke Laravel (Background process)
         kirimKeLaravel(uploadMap).catchError((e) => print("Laravel skip: $e"));
 
-        await db.update('panen', {'sync_status': 'synced'}, where: 'id = ?', whereArgs: [id]);
-        print("✅ Panen Sync ID: $id");
+        print("✅ Panen Synced: $docId");
       } catch (e) {
         print("❌ Gagal sync Panen ID ${data['id']}: $e");
       }
@@ -530,6 +608,22 @@ class DatabaseHelper {
 
         await FirebaseFirestore.instance.collection('trips').doc(docId).set(syncData);
         await db.update('trip', {'sync_status': 'synced'}, where: 'id = ?', whereArgs: [tId]);
+
+        // Update status_trip di Firebase untuk panen terkait
+        final detailList = await db.query('trip_detail', where: 'trip_id = ?', whereArgs: [tId]);
+        for (var det in detailList) {
+          final pId = det['panen_id'];
+          final pData = await db.query('panen', where: 'id = ?', whereArgs: [pId]);
+          if (pData.isNotEmpty) {
+            final user = pData.first['user'] ?? 'unknown';
+            final pDocId = "${user}_$pId";
+            await FirebaseFirestore.instance.collection('panen').doc(pDocId).update({
+              'status_trip': 'IN_TRIP',
+              'trip_id': tId,
+            }).catchError((_) => null);
+          }
+        }
+
         print("✅ Trip Sync ID: $docId");
       } catch (e) {
         print("❌ Gagal sync Trip ID ${trip['id']}: $e");
@@ -562,6 +656,12 @@ class DatabaseHelper {
       } catch (e) {
         print("❌ Gagal sync PKS TripID ${pks['trip_id']}: $e");
       }
+    } // End of PKS loop
+    } catch (e) {
+      print("❌ Error sistem saat syncData: $e");
+    } finally {
+      _isSyncing = false; // Pastikan flag direset apapun yang terjadi
+      print("🔄 Sinkronisasi selesai.");
     }
   }
 
@@ -596,6 +696,16 @@ class DatabaseHelper {
 
       await FirebaseFirestore.instance.collection('trips').doc(docId).set(syncMap);
       await db.update('trip', {'sync_status': 'synced'}, where: 'id = ?', whereArgs: [tripId]);
+      
+      // Update status panen terkait di Firebase (karena sudah masuk trip)
+      for (var pId in panenIds) {
+        final pData = await db.query('panen', where: 'id = ?', whereArgs: [pId]);
+        if (pData.isNotEmpty) {
+           final user = pData.first['user'] ?? 'unknown';
+           final pDocId = "${user}_$pId";
+           await FirebaseFirestore.instance.collection('panen').doc(pDocId).update({'status_trip': 'IN_TRIP', 'trip_id': tripId});
+        }
+      }
     } catch (_) {}
 
     return tripId;

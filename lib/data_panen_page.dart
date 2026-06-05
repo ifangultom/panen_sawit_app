@@ -8,6 +8,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'database_helper.dart';
 import 'input_panen.dart';
 import 'detail_panen_page.dart';
+import 'utils/date_utils.dart';
 
 // ─── TEMA BIRU ─────────────────────────────────────────────────────────────
 const _biru       = Color(0xFF0D47A1);
@@ -60,45 +61,74 @@ class _DataPanenPageState extends State<DataPanenPage> {
   Future<void> loadUser() async {
     final prefs = await SharedPreferences.getInstance();
     String user  = prefs.getString('current_user') ?? "";
-    afdelingUser = prefs.getString('afd_login')    ?? "";
-    roleUser     = (prefs.getString('role_$user')   ?? "").toUpperCase();
+    String afd   = prefs.getString('afd_login')    ?? "";
+    String role  = (prefs.getString('role_$user')   ?? "").toUpperCase();
 
-    // 🔥 FIX: pastikan afdelingUser terisi untuk Mandor
-    if (afdelingUser.isEmpty) {
-      // Coba ambil afdeling langsung dari user data jika afd_login kosong
-      afdelingUser = prefs.getString('afdeling_$user') ?? "";
-      
-      if (afdelingUser.isEmpty) {
-        final kcsLogin = prefs.getString('kcs_login') ?? "";
-        const kcsToAfd = {"KCS1": "AFD1", "KCS2": "AFD2", "KCS3": "AFD3"};
-        afdelingUser = kcsToAfd[kcsLogin] ?? "";
+    // 🔥 FIX: pastikan afdeling terisi untuk Mandor
+    if (afd.isEmpty) {
+      afd = prefs.getString('afdeling_$user') ?? "";
+      if (afd.isEmpty) {
+        final kcsL = prefs.getString('kcs_login') ?? "";
+        afd = AppDateUtils.mapKcsToAfd(kcsL);
       }
-      
-      if (afdelingUser.isNotEmpty) {
-        await prefs.setString('afd_login', afdelingUser);
+      if (afd.isNotEmpty) {
+        await prefs.setString('afd_login', afd);
       }
     }
+
+    setState(() {
+      afdelingUser = afd;
+      roleUser     = role;
+    });
 
     await loadData();
   }
 
-  // ─── LOAD DATA (Firebase + SQLite fallback) ────────────────────────────────
+  // Helper untuk memuat data dari SQLite dengan filter tanggal fleksibel
+  Future<List<Map<String, dynamic>>> _loadDataOffline() async {
+    final result = await DatabaseHelper.instance.getAllPanen();
+    List<Map<String, dynamic>> temp = List<Map<String, dynamic>>.from(result);
+
+    final String afdNormalized = afdelingUser.replaceAll(' ', '').toUpperCase();
+    if (roleUser != "ADMIN" && afdNormalized.isNotEmpty && afdNormalized != "ALL") {
+      temp = temp.where((e) {
+        String itemAfd = (e['afdeling'] ?? "").toString().replaceAll(' ', '').toUpperCase();
+        if (itemAfd.isEmpty) {
+          itemAfd = (e['kcs'] ?? "").toString().replaceAll(' ', '').toUpperCase();
+          if (itemAfd.contains("KCS")) itemAfd = itemAfd.replaceAll("KCS", "AFD");
+        }
+        return itemAfd == afdNormalized;
+      }).toList();
+    }
+
+    final patterns = AppDateUtils.getDateSearchPatterns(filterTanggal);
+    return temp.where((e) {
+      String tgl = (e['tanggal'] ?? "").toString();
+      if (selectedYear != null) {
+        DateTime? dt = AppDateUtils.parseDate(tgl);
+        if (dt == null) return false;
+        bool matchYear = dt.year == selectedYear;
+        bool matchMonth = selectedMonth == null || dt.month == selectedMonth;
+        return matchYear && matchMonth;
+      }
+      return patterns.any((p) => tgl.startsWith(p));
+    }).toList();
+  }
+
+  // ─── LOAD DATA (Firebase + SQLite merge) ──────────────────────────────────
   Future<void> loadData() async {
+    final String afdNormalized = afdelingUser.replaceAll(' ', '').toUpperCase();
     List<Map<String, dynamic>> temp = [];
 
     try {
+      // 1. Ambil data lokal dulu
+      final localData = await _loadDataOffline();
+      
       final connectivity = await Connectivity().checkConnectivity();
-
       if (connectivity != ConnectivityResult.none) {
-        // 🔥 Online: baca dari Firebase
+        // 2. Ambil data online dari Firebase
         Query query = FirebaseFirestore.instance.collection('panen');
 
-        // Filter afdeling
-        if (roleUser != "ADMIN" && afdelingUser.isNotEmpty) {
-          query = query.where('afdeling', isEqualTo: afdelingUser.trim().toUpperCase());
-        }
-
-        // Jika filter bulan/tahun dipilih (Filter Tambahan)
         if (selectedYear != null) {
           DateTime firstDay = DateTime(selectedYear!, selectedMonth ?? 1, 1);
           DateTime lastDay = selectedMonth != null 
@@ -108,93 +138,71 @@ class _DataPanenPageState extends State<DataPanenPage> {
           query = query.where('tanggal', isGreaterThanOrEqualTo: firstDay.toIso8601String().split('T')[0])
                        .where('tanggal', isLessThanOrEqualTo: lastDay.toIso8601String().split('T')[0]);
         } else {
-          // Filter tanggal harian (default jika tahun tidak dipilih)
           final tglFilter = filterTanggal.toString().split(" ")[0];
           query = query.where('tanggal', isGreaterThanOrEqualTo: tglFilter)
               .where('tanggal', isLessThan: '${tglFilter}Z');
         }
 
-        query = query.orderBy('tanggal', descending: true);
-
         final snapshot = await query.get();
         
-        // Gunakan pemrosesan async untuk decode gambar agar tidak memblock UI
-        temp = await Future(() {
-          return snapshot.docs.map((doc) {
-            final d = Map<String, dynamic>.from(doc.data() as Map);
-            d['firebase_id'] = doc.id;
-            d['id'] = d['local_id'] ?? doc.id.hashCode.abs();
-            
-            // CACHE BYTES: Decode sekali di sini
-            if (d['foto'] != null && d['foto'].toString().startsWith('data:image')) {
-              try {
-                final String path = d['foto'].toString();
-                final base64Data = path.contains(',') ? path.split(',').last : path;
-                final cleanBase64 = base64Data.replaceAll(RegExp(r'\s+'), '');
-                d['foto_bytes'] = base64Decode(cleanBase64);
-              } catch (e) {
-                debugPrint("Error pre-decoding: $e");
-              }
-            }
-            return d;
-          }).toList();
-        });
-
-      } else {
-        // 📱 Offline: baca dari SQLite lokal
-        final result = await DatabaseHelper.instance.getAllPanen();
-        temp = result.where((e) => (e['sync_status'] ?? '') != 'synced').toList();
-
-        if (roleUser != "ADMIN" && afdelingUser.isNotEmpty) {
-          temp = temp.where((e) => (e['afdeling'] ?? "") == afdelingUser).toList();
-        }
-
-        final tglFilter = filterTanggal.toString().split(" ")[0];
-        temp = temp.where((e) {
-          String tgl = (e['tanggal'] ?? "").toString();
-          
-          if (selectedYear != null) {
-            try {
-              DateTime dt = DateTime.parse(tgl);
-              bool matchYear = dt.year == selectedYear;
-              bool matchMonth = selectedMonth == null || dt.month == selectedMonth;
-              return matchYear && matchMonth;
-            } catch (_) {
-              return false;
-            }
-          }
-          
-          return tgl.startsWith(tglFilter);
+        List<Map<String, dynamic>> onlineData = snapshot.docs.map((doc) {
+          final d = Map<String, dynamic>.from(doc.data() as Map);
+          d['firebase_id'] = doc.id;
+          return d;
         }).toList();
-      }
 
-    } catch (e) {
-      // Error Firebase → fallback SQLite
-      print("Firebase error, fallback SQLite: $e");
-      final result = await DatabaseHelper.instance.getAllPanen();
-      // 🔥 Filter out synced records in fallback/offline mode
-      temp = result.where((e) => (e['sync_status'] ?? '') != 'synced').toList();
+        // 3. Filter afdeling online (In-Memory)
+        if (roleUser != "ADMIN" && afdNormalized.isNotEmpty && afdNormalized != "ALL") {
+          onlineData = onlineData.where((d) {
+            String itemAfd = (d['afdeling'] ?? "").toString().replaceAll(' ', '').toUpperCase();
+            if (itemAfd.isEmpty) {
+              itemAfd = AppDateUtils.mapKcsToAfd(d['kcs']?.toString());
+            }
+            return itemAfd == afdNormalized;
+          }).toList();
+        }
 
-      if (roleUser != "ADMIN" && afdelingUser.isNotEmpty) {
-        temp = temp.where((e) => (e['afdeling'] ?? "") == afdelingUser).toList();
-      }
+        // 4. Gabungkan & De-duplikasi
+        Map<String, Map<String, dynamic>> combined = {};
+        final prefs = await SharedPreferences.getInstance();
+        final user = prefs.getString('current_user') ?? "";
 
-      // 🔥 FIX: Tetap filter berdasarkan tanggal jika Firebase error/fallback
-      final tglFilter = filterTanggal.toString().split(" ")[0];
-      temp = temp.where((e) {
-        String tgl = (e['tanggal'] ?? "").toString();
-        if (selectedYear != null) {
-          try {
-            DateTime dt = DateTime.parse(tgl);
-            bool matchYear = dt.year == selectedYear;
-            bool matchMonth = selectedMonth == null || dt.month == selectedMonth;
-            return matchYear && matchMonth;
-          } catch (_) {
-            return false;
+        for (var d in localData) {
+          String key = d['firebase_id'] ?? d['doc_id'] ?? "${user}_${d['id']}";
+          combined[key] = Map<String, dynamic>.from(d);
+        }
+
+        for (var d in onlineData) {
+          String key = d['firebase_id'] ?? d['doc_id'] ?? "";
+          if (key.isNotEmpty) {
+            if (combined.containsKey(key)) {
+              final localId = combined[key]!['id'];
+              combined[key] = Map<String, dynamic>.from(d);
+              combined[key]!['id'] = localId;
+            } else {
+              d['id'] = d['id'] ?? d['local_id'] ?? key.hashCode.abs();
+              combined[key] = Map<String, dynamic>.from(d);
+            }
           }
         }
-        return tgl.startsWith(tglFilter);
-      }).toList();
+        temp = combined.values.toList();
+      } else {
+        temp = localData;
+      }
+    } catch (e) {
+      print("Error loading data: $e");
+      temp = await _loadDataOffline();
+    }
+
+    // Pre-decode images for the combined list
+    for (var d in temp) {
+      if (d['foto_bytes'] == null && d['foto'] != null && d['foto'].toString().startsWith('data:image')) {
+        try {
+          final String path = d['foto'].toString();
+          final base64Data = path.contains(',') ? path.split(',').last : path;
+          d['foto_bytes'] = base64Decode(base64Data.replaceAll(RegExp(r'\s+'), ''));
+        } catch (_) {}
+      }
     }
 
     // Filter status dan KCS (berlaku di semua mode)

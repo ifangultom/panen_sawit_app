@@ -12,6 +12,7 @@ import 'profil_mandor_page.dart';
 import 'user_helper.dart';
 import 'login_page.dart';
 import 'database_helper.dart';
+import 'utils/date_utils.dart';
 
 class DashboardMandor extends StatefulWidget {
   const DashboardMandor({super.key});
@@ -84,8 +85,7 @@ class _DashboardMandorState extends State<DashboardMandor> with SingleTickerProv
       if (afd.isEmpty) {
         // Fallback terakhir: mapping dari kcs_login
         final kcs = prefs.getString('kcs_login') ?? "";
-        const map = {"KCS1": "AFD1", "KCS2": "AFD2", "KCS3": "AFD3"};
-        afd = map[kcs] ?? "";
+        afd = AppDateUtils.mapKcsToAfd(kcs);
       }
       if (afd.isNotEmpty) await prefs.setString('afd_login', afd);
     }

@@ -201,10 +201,7 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
 
         String? afd = t['afdeling']?.toString() ?? t['afd']?.toString();
         if (afd == null || afd.isEmpty) {
-          String kcs = t['kcs']?.toString() ?? "";
-          if (kcs == "KCS1") afd = "AFD1";
-          else if (kcs == "KCS2") afd = "AFD2";
-          else if (kcs == "KCS3") afd = "AFD3";
+          afd = AppDateUtils.mapKcsToAfd(t['kcs']?.toString());
         }
 
         return {

@@ -64,10 +64,7 @@ class _RiwayatPksPageState extends State<RiwayatPksPage> {
                 var d = doc.data();
                 // 🔥 Fallback mapping KCS -> AFD
                 if (d['afdeling'] == null || d['afdeling'].toString().isEmpty) {
-                  String kcs = d['kcs']?.toString() ?? "";
-                  if (kcs == "KCS1") d['afdeling'] = "AFD1";
-                  else if (kcs == "KCS2") d['afdeling'] = "AFD2";
-                  else if (kcs == "KCS3") d['afdeling'] = "AFD3";
+                  d['afdeling'] = AppDateUtils.mapKcsToAfd(d['kcs']?.toString());
                 }
 
                 // Unifikasi field kendaraan/no_plat

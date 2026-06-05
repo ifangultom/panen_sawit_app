@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'utils/date_utils.dart';
 
 class AnalisisProduksiPage extends StatefulWidget {
@@ -179,7 +178,7 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
                         Text("${e.value.toStringAsFixed(0)} Janjang", style: TextStyle(color: accentBlue, fontWeight: FontWeight.bold)),
                       ],
                     ),
-                  )).toList(),
+                  )),
                 ],
               ),
         ),
@@ -207,11 +206,11 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
+                const Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text("Analisis Produksi & Kualitas", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                    const Text("Monitoring per Afdeling dan Blok (Data Ter-ACC)", style: TextStyle(fontSize: 14, color: Colors.grey)),
+                    Text("Analisis Produksi & Kualitas", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                    Text("Monitoring per Afdeling dan Blok (Data Ter-ACC)", style: TextStyle(fontSize: 14, color: Colors.grey)),
                   ],
                 ),
                 Row(
@@ -278,7 +277,7 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
                         double persen = sumKualitas > 0 ? (e.value / sumKualitas * 100) : 0;
                         Color c = e.key == "Matang" ? primaryBlue : (e.key == "Mentah" ? const Color(0xFFFB8C00) : accentBlue);
                         return _qualityLegendItem(e.key, "${persen.toStringAsFixed(1)}%", c);
-                      }).toList(),
+                      }),
                     ],
                   ),
                 ),
@@ -305,9 +304,9 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
         child: Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            gradient: LinearGradient(colors: [color, color.withOpacity(0.8)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+            gradient: LinearGradient(colors: [color, color.withValues(alpha: 0.8)], begin: Alignment.topLeft, end: Alignment.bottomRight),
             borderRadius: BorderRadius.circular(20),
-            boxShadow: [BoxShadow(color: color.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 6))],
+            boxShadow: [BoxShadow(color: color.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 6))],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -342,7 +341,7 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.withOpacity(0.2))),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.withValues(alpha: 0.2))),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<int?>(
               value: selectedMonth,
@@ -358,7 +357,7 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
         const SizedBox(width: 8),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.withOpacity(0.2))),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.withValues(alpha: 0.2))),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<int?>(
               value: selectedYear,
@@ -398,10 +397,10 @@ class _AnalisisProduksiPageState extends State<AnalisisProduksiPage> {
       child: Container(
         margin: const EdgeInsets.only(right: 15),
         padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)]),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10)]),
         child: Row(
           children: [
-            Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)), child: Icon(icon, color: color, size: 28)),
+            Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)), child: Icon(icon, color: color, size: 28)),
             const SizedBox(width: 15),
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(title, style: const TextStyle(color: Colors.grey, fontSize: 13)),

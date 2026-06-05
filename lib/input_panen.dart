@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'api_service.dart';
+import 'utils/date_utils.dart';
 
 // ─── WARNA TEMA ───────────────────────────────────────────────────────────────
 const _primaryBlue = Color(0xFF0D47A1);
@@ -203,7 +204,6 @@ Kota: Kota Medan
       base64Foto = "data:image/jpeg;base64,$base64String"; 
     }
 
-    final kcsToAfd    = {"KCS1": "AFD1", "KCS2": "AFD2", "KCS3": "AFD3"};
     final kcsToMandor = {"KCS1": "mandor_afd1", "KCS2": "mandor_afd2", "KCS3": "mandor_afd3"};
     
     // Ambil waktu sekarang untuk jam yang presisi
@@ -214,6 +214,18 @@ Kota: Kota Medan
     String tglInput = tanggal.text.isNotEmpty ? tanggal.text.replaceAll('/', '-') : waktuLengkap.split('T')[0];
     if (tglInput.contains(' ')) tglInput = tglInput.split(' ')[0];
     
+    // Standarisasi format tanggal untuk Firestore (YYYY-MM-DD)
+    // tglInput bisa 2024-05-01
+    List<String> parts = tglInput.split('-');
+    if (parts.length == 3) {
+      // Pastikan urutan YYYY-MM-DD
+      if (parts[0].length < 4) { // Berarti DD-MM-YYYY
+        tglInput = "${parts[2]}-${parts[1].padLeft(2,'0')}-${parts[0].padLeft(2,'0')}";
+      } else {
+        tglInput = "${parts[0]}-${parts[1].padLeft(2,'0')}-${parts[2].padLeft(2,'0')}";
+      }
+    }
+
     // Format: YYYY-MM-DDTHH:mm:ss...
     String tanggalFinal = "${tglInput}T${now.hour.toString().padLeft(2,'0')}:${now.minute.toString().padLeft(2,'0')}:${now.second.toString().padLeft(2,'0')}";
 
@@ -226,6 +238,7 @@ Kota: Kota Medan
       'tph': tph.text,
       'thn_tanam': tahunTanam.text,
       'kcs': selectedKCS,
+      'afdeling': AppDateUtils.mapKcsToAfd(selectedKCS),
       'brondolan': brondolan.text,
       'mentah': mentah.text,
       'matang': matang.text,
@@ -242,7 +255,7 @@ Kota: Kota Medan
     final dataLokal = Map<String, dynamic>.from(dataFirestore);
     dataLokal['foto'] = imageFile?.path ?? "";
     dataLokal['sync_status'] = 'offline';
-    dataLokal['afdeling'] = kcsToAfd[selectedKCS] ?? "AFD1";
+    dataLokal['afdeling'] = AppDateUtils.mapKcsToAfd(selectedKCS);
     dataLokal['mandor'] = kcsToMandor[selectedKCS] ?? "mandor_afd1";
 
     if (!mounted) return;

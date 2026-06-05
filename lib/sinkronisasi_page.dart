@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'database_helper.dart';
+import 'package:panen_sawit_app/database_helper.dart';
+import 'package:panen_sawit_app/utils/date_utils.dart';
 
 class SinkronisasiPage extends StatefulWidget {
   final bool readOnly;
@@ -46,17 +47,25 @@ class _SinkronisasiPageState extends State<SinkronisasiPage> {
 
   Future<void> loadData() async {
     final db = await DatabaseHelper.instance.database;
-    List<Map<String, dynamic>> data;
-
-    if (kcsLogin.isEmpty) {
-      data = await db.query('panen', orderBy: 'id DESC');
+    
+    // Ambil semua data lokal
+    final List<Map<String, dynamic>> allLocal = await db.query('panen', orderBy: 'id DESC');
+    
+    // Filter di memori agar konsisten dengan normalisasi AppDateUtils
+    final String afdNormalized = AppDateUtils.mapKcsToAfd(kcsLogin);
+    
+    List<Map<String, dynamic>> filtered;
+    if (afdNormalized.isEmpty || afdNormalized == "ALL") {
+      filtered = allLocal;
     } else {
-      data = await db.query('panen',
-          where: 'kcs = ?', whereArgs: [kcsLogin], orderBy: 'id DESC');
+      filtered = allLocal.where((e) {
+        String itemAfd = AppDateUtils.mapKcsToAfd(e['afdeling']?.toString() ?? e['kcs']?.toString() ?? "");
+        return itemAfd == afdNormalized;
+      }).toList();
     }
 
     setState(() {
-      dataList = data;
+      dataList = filtered;
       _applyFilter();
     });
   }
@@ -427,105 +436,47 @@ class _SinkronisasiPageState extends State<SinkronisasiPage> {
                       border: Border.all(
                         color: isSelected
                             ? const Color(0xFF0D47A1)
-                            : isSynced
-                            ? const Color(0xFF0D47A1).withOpacity(0.2)
-                            : Colors.orange.withOpacity(0.2),
-                        width: isSelected ? 2 : 1,
+                            : isSynced ? Colors.transparent : Colors.orange.shade200,
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.04),
-                          blurRadius: 6,
+                          color: Colors.black.withOpacity(0.03),
+                          blurRadius: 8,
                           offset: const Offset(0, 2),
                         ),
                       ],
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Row(
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      leading: seleksiMode
+                          ? Icon(
+                        isSelected ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+                        color: isSelected ? const Color(0xFF0D47A1) : Colors.grey,
+                      )
+                          : CircleAvatar(
+                        backgroundColor: isSynced ? Colors.green.shade50 : Colors.orange.shade50,
+                        child: Icon(
+                          isSynced ? Icons.cloud_done_rounded : Icons.cloud_off_rounded,
+                          color: isSynced ? Colors.green : Colors.orange,
+                          size: 20,
+                        ),
+                      ),
+                      title: Text(
+                        item['pemanen'] ?? "-",
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-
-                          // Checkbox atau nomor
-                          if (seleksiMode)
-                            AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              width: 24, height: 24,
-                              margin: const EdgeInsets.only(right: 12),
-                              decoration: BoxDecoration(
-                                color: isSelected ? const Color(0xFF0D47A1) : Colors.transparent,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: isSelected ? const Color(0xFF0D47A1) : Colors.grey,
-                                  width: 2,
-                                ),
-                              ),
-                              child: isSelected
-                                  ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
-                                  : null,
-                            )
-                          else
-                            Container(
-                              width: 36, height: 36,
-                              margin: const EdgeInsets.only(right: 12),
-                              decoration: BoxDecoration(
-                                color: isSynced
-                                    ? const Color(0xFF0D47A1).withOpacity(0.1)
-                                    : Colors.orange.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Icon(
-                                isSynced ? Icons.cloud_done_rounded : Icons.cloud_upload_rounded,
-                                size: 18,
-                                color: isSynced ? const Color(0xFF0D47A1) : Colors.orange,
-                              ),
-                            ),
-
-                          // Info
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  "Blok ${item['blok'] ?? '-'} — ${item['pemanen'] ?? '-'}",
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 14,
-                                    color: Color(0xFF0D1B4B),
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  _formatTanggal(item['tanggal']),
-                                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                                ),
-                                if ((item['afdeling'] ?? '').toString().isNotEmpty)
-                                  Text(
-                                    item['afdeling'],
-                                    style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
-                                  ),
-                              ],
-                            ),
-                          ),
-
-                          // Status badge
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: isSynced ? const Color(0xFF0D47A1) : Colors.orange,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              isSynced ? "SYNCED" : "OFFLINE",
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
+                          const SizedBox(height: 4),
+                          Text("${item['blok'] ?? '-'} • ${item['jumlah_jangjang'] ?? 0} Janjang"),
+                          Text(
+                            _formatTanggal(item['tanggal']),
+                            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                           ),
                         ],
                       ),
+                      trailing: isSynced ? null : const Icon(Icons.chevron_right_rounded, color: Colors.grey),
                     ),
                   ),
                 );
@@ -539,19 +490,25 @@ class _SinkronisasiPageState extends State<SinkronisasiPage> {
 
   Widget _statChip(IconData icon, String count, String label, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(20),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2)),
+        ],
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 15, color: Colors.white),
-          const SizedBox(width: 5),
-          Text(
-            "$count $label",
-            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
+          Icon(icon, color: color, size: 18),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(count, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: color)),
+              Text(label, style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
+            ],
           ),
         ],
       ),

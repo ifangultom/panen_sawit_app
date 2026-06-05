@@ -598,14 +598,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
       // 1. Mapping Afdeling
       String? afd = item['afdeling']?.toString();
       if (afd == null || afd.isEmpty) {
-        String kcs = item['kcs']?.toString() ?? "";
-        if (kcs == "KCS1") {
-          afd = "AFD1";
-        } else if (kcs == "KCS2") {
-          afd = "AFD2";
-        } else if (kcs == "KCS3") {
-          afd = "AFD3";
-        }
+        afd = AppDateUtils.mapKcsToAfd(item['kcs']?.toString());
       }
       if (selectedAfdeling != null && afd != selectedAfdeling) return false;
       
@@ -668,14 +661,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
           if (!rankingMap.containsKey(namaPemanen)) {
             String? afd = item['afdeling']?.toString();
             if (afd == null || afd.isEmpty) {
-              String kcs = item['kcs']?.toString() ?? "";
-              if (kcs == "KCS1") {
-                afd = "AFD1";
-              } else if (kcs == "KCS2") {
-                afd = "AFD2";
-              } else if (kcs == "KCS3") {
-                afd = "AFD3";
-              }
+              afd = AppDateUtils.mapKcsToAfd(item['kcs']?.toString());
             }
             rankingMap[namaPemanen] = {
               'nama': namaPemanen, 
