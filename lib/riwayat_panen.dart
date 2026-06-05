@@ -70,15 +70,20 @@ class _RiwayatPanenPageState extends State<RiwayatPanenPage> {
         // 📱 OFFLINE: SQLite lokal
         final db = await DatabaseHelper.instance.database;
         if (roleUser == "ADMIN" || afdelingUser == "ALL") {
-          temp = await db.query('panen', where: 'substr(tanggal,1,10) = ?', whereArgs: [tgl], orderBy: 'id DESC');
+          temp = await db.query('panen', where: 'substr(tanggal,1,10) = ? AND (sync_status IS NULL OR sync_status != "synced")', whereArgs: [tgl], orderBy: 'id DESC');
         } else {
-          temp = await db.query('panen', where: 'afdeling = ? AND substr(tanggal,1,10) = ?', whereArgs: [afdelingUser, tgl], orderBy: 'id DESC');
+          temp = await db.query('panen', where: 'afdeling = ? AND substr(tanggal,1,10) = ? AND (sync_status IS NULL OR sync_status != "synced")', whereArgs: [afdelingUser, tgl], orderBy: 'id DESC');
         }
       }
     } catch (e) {
-      print("Firebase error, fallback SQLite: \$e");
+      print("Firebase error, fallback SQLite: $e");
       final db = await DatabaseHelper.instance.database;
-      temp = await db.query('panen', where: 'afdeling = ? AND substr(tanggal,1,10) = ?', whereArgs: [afdelingUser, tgl], orderBy: 'id DESC');
+      // 🔥 Filter out synced records in fallback
+      if (roleUser == "ADMIN" || afdelingUser == "ALL") {
+        temp = await db.query('panen', where: 'substr(tanggal,1,10) = ? AND (sync_status IS NULL OR sync_status != "synced")', whereArgs: [tgl], orderBy: 'id DESC');
+      } else {
+        temp = await db.query('panen', where: 'afdeling = ? AND substr(tanggal,1,10) = ? AND (sync_status IS NULL OR sync_status != "synced")', whereArgs: [afdelingUser, tgl], orderBy: 'id DESC');
+      }
     }
 
     setState(() {

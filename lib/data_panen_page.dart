@@ -128,7 +128,7 @@ class _DataPanenPageState extends State<DataPanenPage> {
       } else {
         // 📱 Offline: baca dari SQLite lokal
         final result = await DatabaseHelper.instance.getAllPanen();
-        temp = result;
+        temp = result.where((e) => (e['sync_status'] ?? '') != 'synced').toList();
 
         if (roleUser != "ADMIN" && afdelingUser.isNotEmpty) {
           temp = temp.where((e) => (e['afdeling'] ?? "") == afdelingUser).toList();
@@ -157,7 +157,9 @@ class _DataPanenPageState extends State<DataPanenPage> {
       // Error Firebase → fallback SQLite
       print("Firebase error, fallback SQLite: $e");
       final result = await DatabaseHelper.instance.getAllPanen();
-      temp = result;
+      // 🔥 Filter out synced records in fallback/offline mode
+      temp = result.where((e) => (e['sync_status'] ?? '') != 'synced').toList();
+
       if (roleUser != "ADMIN" && afdelingUser.isNotEmpty) {
         temp = temp.where((e) => (e['afdeling'] ?? "") == afdelingUser).toList();
       }

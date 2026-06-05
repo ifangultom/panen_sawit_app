@@ -340,6 +340,7 @@ class DatabaseHelper {
     WHERE kcs = ?
     AND status = 'ACC'
     AND substr(tanggal,1,10) = ?
+    AND (sync_status IS NULL OR sync_status != 'synced')
     AND id NOT IN (
       SELECT panen_id FROM trip_detail
     )

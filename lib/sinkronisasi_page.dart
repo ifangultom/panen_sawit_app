@@ -245,42 +245,47 @@ class _SinkronisasiPageState extends State<SinkronisasiPage> {
 
           // ===== STAT SUMMARY =====
           Container(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            padding: const EdgeInsets.symmetric(vertical: 14),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 colors: [Color(0xFF0D47A1), Color(0xFF1976D2)],
               ),
             ),
-            child: Row(
-              children: [
-                _statChip(Icons.cloud_off_rounded, "$totalOffline", "Belum Sync", Colors.orange),
-                const SizedBox(width: 10),
-                _statChip(Icons.cloud_done_rounded, "$totalSynced", "Sudah Sync", const Color(0xFF0D47A1)),
-                const Spacer(),
-                if (filterTanggal != null)
-                  GestureDetector(
-                    onTap: () => setState(() { filterTanggal = null; _applyFilter(); }),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.calendar_today, color: Colors.white, size: 12),
-                          const SizedBox(width: 4),
-                          Text(
-                            "${filterTanggal!.day}/${filterTanggal!.month}/${filterTanggal!.year}",
-                            style: const TextStyle(color: Colors.white, fontSize: 11),
-                          ),
-                          const SizedBox(width: 4),
-                          const Icon(Icons.close, color: Colors.white70, size: 12),
-                        ],
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  _statChip(Icons.cloud_off_rounded, "$totalOffline", "Belum Sync", Colors.orange),
+                  const SizedBox(width: 10),
+                  _statChip(Icons.cloud_done_rounded, "$totalSynced", "Sudah Sync", const Color(0xFF0D47A1)),
+                  if (filterTanggal != null) ...[
+                    const SizedBox(width: 15),
+                    GestureDetector(
+                      onTap: () => setState(() { filterTanggal = null; _applyFilter(); }),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.calendar_today, color: Colors.white, size: 12),
+                            const SizedBox(width: 4),
+                            Text(
+                              "${filterTanggal!.day}/${filterTanggal!.month}/${filterTanggal!.year}",
+                              style: const TextStyle(color: Colors.white, fontSize: 11),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.close, color: Colors.white70, size: 12),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-              ],
+                  ],
+                ],
+              ),
             ),
           ),
 

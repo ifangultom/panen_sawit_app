@@ -20,7 +20,13 @@ class InputPksPage extends StatefulWidget {
 class _InputPksPageState extends State<InputPksPage> {
   final beratController = TextEditingController();
   int totalJanjang = 0;
+  DateTime selectedDate = DateTime.now();
   final _biru = const Color(0xFF0D47A1);
+
+  final List<String> months = [
+    "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+  ];
 
   @override
   void initState() {
@@ -29,6 +35,35 @@ class _InputPksPageState extends State<InputPksPage> {
 
     if (widget.data != null) {
       beratController.text = widget.data!['berat_netto']?.toString() ?? "";
+      if (widget.data!['waktu_timbang'] != null) {
+        selectedDate = DateTime.tryParse(widget.data!['waktu_timbang'].toString()) ?? DateTime.now();
+      }
+    }
+  }
+
+  Future<void> _selectDate(BuildContext context) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: _biru,
+              onPrimary: Colors.white,
+              onSurface: _biru,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null && picked != selectedDate) {
+      setState(() {
+        selectedDate = picked;
+      });
     }
   }
 
@@ -52,10 +87,21 @@ class _InputPksPageState extends State<InputPksPage> {
 
     double berat = double.tryParse(beratController.text) ?? 0;
 
+    // Gabungkan tanggal terpilih dengan jam sekarang agar record tetap presisi
+    final now = DateTime.now();
+    final finalDate = DateTime(
+      selectedDate.year,
+      selectedDate.month,
+      selectedDate.day,
+      now.hour,
+      now.minute,
+      now.second,
+    );
+
     await DatabaseHelper.instance.upsertPks({
       'trip_id': widget.tripId,
       'berat_netto': berat,
-      'waktu_timbang': DateTime.now().toIso8601String(),
+      'waktu_timbang': finalDate.toIso8601String(),
     });
 
     if (!mounted) return;
@@ -126,6 +172,35 @@ class _InputPksPageState extends State<InputPksPage> {
                       const Text(
                         "Informasi Timbangan",
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        "Tanggal Timbang",
+                        style: TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(height: 8),
+                      InkWell(
+                        onTap: () => _selectDate(context),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(12),
+                            color: Colors.grey[50],
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.calendar_today_rounded, color: _biru, size: 20),
+                              const SizedBox(width: 12),
+                              Text(
+                                "${selectedDate.day} ${months[selectedDate.month - 1]} ${selectedDate.year}",
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                              ),
+                              const Spacer(),
+                              Icon(Icons.arrow_drop_down, color: Colors.grey[600]),
+                            ],
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 20),
                       TextField(

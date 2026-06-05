@@ -76,6 +76,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
 
   int totalPanen = 0;
   double totalTon = 0;
+  double totalPks = 0; // Tambahkan ini jika belum ada di state
   int jumlahPemanen = 0;
   int totalRegisteredPemanen = 0;
   int totalTrip = 0;
@@ -516,9 +517,10 @@ class _DashboardAdminState extends State<DashboardAdmin> {
       DateTime? dt = _parseDate(item['tanggal'] ?? item['waktu']);
       if (dt == null) return selectedYear == null && filterTanggalStart == null;
 
-      if (selectedYear != null) {
-        if (dt.year != selectedYear) return false;
+      if (selectedYear != null || selectedMonth != null) {
+        if (selectedYear != null && dt.year != selectedYear) return false;
         if (selectedMonth != null && dt.month != selectedMonth) return false;
+        return true;
       } else if (filterTanggalStart != null && filterTanggalEnd != null) {
         DateTime dateOnly = DateTime(dt.year, dt.month, dt.day);
         DateTime startOnly = DateTime(filterTanggalStart!.year, filterTanggalStart!.month, filterTanggalStart!.day);
@@ -532,6 +534,23 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     List<Map<String, dynamic>> filteredPks = allPksData.where((item) {
       // 1. Mapping Afdeling
       String? afd = item['afdeling']?.toString();
+      
+      // Fallback: Resolve dari allTripsData jika ada trip_id
+      if (afd == null || afd.isEmpty) {
+        String tripId = item['trip_id']?.toString() ?? "";
+        if (tripId.isNotEmpty) {
+          try {
+            final trip = allTripsData.firstWhere(
+              (t) => (t['id']?.toString() == tripId || t['id_firebase']?.toString() == tripId),
+              orElse: () => <String, dynamic>{}
+            );
+            if (trip.isNotEmpty) {
+              afd = trip['afdeling']?.toString();
+            }
+          } catch (_) {}
+        }
+      }
+
       if (afd == null || afd.isEmpty) {
         String kcs = item['kcs']?.toString() ?? "";
         if (kcs == "KCS1") {
@@ -544,15 +563,31 @@ class _DashboardAdminState extends State<DashboardAdmin> {
       }
       if (selectedAfdeling != null && afd != selectedAfdeling) return false;
       
-      // 2. Mapping Tanggal (PKS menggunakan banyak variasi nama field)
-      DateTime? dt = _parseDate(item['waktu_timbang'] ?? item['tanggal_trip'] ?? item['tanggal']);
+      // 2. Mapping Tanggal
+      DateTime? dt = _parseDate(item['tanggal'] ?? item['waktu_timbang'] ?? item['waktu']);
+
+      // Fallback Tanggal dari Trip
+      if (dt == null) {
+        String tripId = item['trip_id']?.toString() ?? "";
+        if (tripId.isNotEmpty) {
+          try {
+            final trip = allTripsData.firstWhere(
+              (t) => (t['id']?.toString() == tripId || t['id_firebase']?.toString() == tripId),
+              orElse: () => <String, dynamic>{}
+            );
+            if (trip.isNotEmpty) {
+              dt = _parseDate(trip['tanggal'] ?? trip['tanggal_trip'] ?? trip['waktu']);
+            }
+          } catch (_) {}
+        }
+      }
       
-      // Jika tidak ada tanggal sama sekali, tampilkan jika tidak ada filter aktif
       if (dt == null) return selectedYear == null && filterTanggalStart == null;
 
-      if (selectedYear != null) {
-        if (dt.year != selectedYear) return false;
+      if (selectedYear != null || selectedMonth != null) {
+        if (selectedYear != null && dt.year != selectedYear) return false;
         if (selectedMonth != null && dt.month != selectedMonth) return false;
+        return true;
       } else if (filterTanggalStart != null && filterTanggalEnd != null) {
         DateTime dateOnly = DateTime(dt.year, dt.month, dt.day);
         DateTime startOnly = DateTime(filterTanggalStart!.year, filterTanggalStart!.month, filterTanggalStart!.day);
@@ -584,9 +619,10 @@ class _DashboardAdminState extends State<DashboardAdmin> {
       // Jika tidak ada tanggal, tampilkan jika tidak ada filter waktu aktif
       if (dt == null) return selectedYear == null && filterTanggalStart == null;
 
-      if (selectedYear != null) {
-        if (dt.year != selectedYear) return false;
+      if (selectedYear != null || selectedMonth != null) {
+        if (selectedYear != null && dt.year != selectedYear) return false;
         if (selectedMonth != null && dt.month != selectedMonth) return false;
+        return true;
       } else if (filterTanggalStart != null && filterTanggalEnd != null) {
         DateTime dateOnly = DateTime(dt.year, dt.month, dt.day);
         DateTime startOnly = DateTime(filterTanggalStart!.year, filterTanggalStart!.month, filterTanggalStart!.day);
@@ -611,11 +647,25 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     if (val is Timestamp) return val.toDate();
     if (val is DateTime) return val;
     if (val is String) {
+      if (val.isEmpty) return null;
       try {
         return DateTime.parse(val);
       } catch (_) {
         try {
-          // Handle format "dd MMM yyyy" atau "dd MMMM yyyy"
+          // Handle format "dd-MM-yyyy" atau "dd/MM/yyyy"
+          if (val.contains('-') || val.contains('/')) {
+            String separator = val.contains('-') ? '-' : '/';
+            final parts = val.split(separator);
+            if (parts.length >= 3) {
+              int d = int.parse(parts[0]);
+              int m = int.parse(parts[1]);
+              int y = int.parse(parts[2]);
+              if (y < 100) y += 2000;
+              return DateTime(y, m, d);
+            }
+          }
+          
+          // Handle format "dd MMM yyyy"
           final parts = val.split(' ');
           if (parts.length >= 3) {
             int day = int.parse(parts[0]);
@@ -686,13 +736,15 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     rankingList.sort((a, b) => b['janjang'].compareTo(a['janjang']));
 
     for (var item in filteredPks) {
-      // Pastikan field berat_netto diparse dengan benar (Firestore terkadang menyimpan sebagai int atau double)
       double berat = 0;
-      var val = item['berat_netto'];
+      // Cek berbagai kemungkinan field berat
+      var val = item['berat_netto'] ?? item['netto'] ?? item['berat'] ?? item['tonase'];
       if (val is num) {
         berat = val.toDouble();
       } else if (val is String) {
-        berat = double.tryParse(val) ?? 0;
+        // Hapus unit 'kg' atau karakter non-numerik jika ada
+        String cleaned = val.toLowerCase().replaceAll('kg', '').replaceAll(',', '').trim();
+        berat = double.tryParse(cleaned) ?? 0;
       }
       totalPksKg += berat;
     }
@@ -700,7 +752,8 @@ class _DashboardAdminState extends State<DashboardAdmin> {
     setState(() {
       data = filteredPanen;
       totalPanen = totalJjg;
-      totalTon = totalPksKg / 1000;
+      totalPks = totalPksKg; // Simpan dalam KG
+      totalTon = totalPksKg / 1000; // Simpan dalam Ton
       jumlahPemanen = pemanenSet.length;
       totalTrip = filteredTrips.length;
       pemanenRanking = rankingList.take(5).toList();
@@ -883,19 +936,48 @@ class _DashboardAdminState extends State<DashboardAdmin> {
                 ),
                 const SizedBox(width: 10),
 
-                _filterDropdown<String?>(
-                  value: selectedAfdeling,
-                  hint: "Afdeling",
+                // Dropdown Bulan
+                _filterDropdown<int?>(
+                  value: selectedMonth,
+                  hint: "Bulan",
                   items: [
-                    const DropdownMenuItem(value: null, child: Text("Semua AFD")),
-                    ...afdelings.map((a) => DropdownMenuItem(value: a, child: Text(a))),
+                    const DropdownMenuItem(value: null, child: Text("Semua Bulan")),
+                    ...List.generate(months.length, (i) => DropdownMenuItem(value: i + 1, child: Text(months[i]))),
                   ],
                   onChanged: (v) {
-                    setState(() => selectedAfdeling = v);
+                    setState(() {
+                      selectedMonth = v;
+                      if (v != null) {
+                        filterTanggalStart = null;
+                        filterTanggalEnd = null;
+                      }
+                    });
                     applyFilter();
                   },
                 ),
                 const SizedBox(width: 10),
+
+                // Dropdown Tahun
+                _filterDropdown<int?>(
+                  value: selectedYear,
+                  hint: "Tahun",
+                  items: [
+                    const DropdownMenuItem(value: null, child: Text("Semua Tahun")),
+                    ...years.map((y) => DropdownMenuItem(value: y, child: Text(y.toString()))),
+                  ],
+                  onChanged: (v) {
+                    setState(() {
+                      selectedYear = v;
+                      if (v != null) {
+                        filterTanggalStart = null;
+                        filterTanggalEnd = null;
+                      }
+                    });
+                    applyFilter();
+                  },
+                ),
+                const SizedBox(width: 10),
+
                 InkWell(
                   onTap: _pickDate,
                   child: Container(
@@ -911,7 +993,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
                         const SizedBox(width: 8),
                         Text(
                           filterTanggalStart == null 
-                            ? "Pilih Tanggal" 
+                            ? "Rentang"
                             : "${filterTanggalStart!.day}/${filterTanggalStart!.month} - ${filterTanggalEnd!.day}/${filterTanggalEnd!.month}",
                           style: TextStyle(fontSize: 13, color: Colors.grey[800]),
                         ),
