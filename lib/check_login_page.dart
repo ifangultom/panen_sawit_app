@@ -21,21 +21,24 @@ class _CheckLoginPageState extends State<CheckLoginPage> {
   }
 
   void checkLogin() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
+    final prefs = await SharedPreferences.getInstance();
 
-    bool isLogin = prefs.getBool('isLogin') ?? false;
-    String role = prefs.getString('role_login') ?? "";
+    // Gunakan 'current_user' untuk konsistensi dengan LoginPage
+    final String? currentUser = prefs.getString('current_user');
+    
+    // Ambil role berdasarkan user yang login
+    final String role = prefs.getString('role_$currentUser') ?? "";
 
-    // Beri waktu 2 detik agar animasi splash screen terlihat
+    // Beri waktu agar animasi splash screen terlihat
     await Future.delayed(const Duration(seconds: 2));
 
     if (!mounted) return;
 
-    if (isLogin) {
-      if (role == "Admin") {
+    if (currentUser != null && currentUser.isNotEmpty) {
+      if (role == "ADMIN") {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardAdmin()));
-      } else if (role == "Mandor") {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => DashboardMandor()));
+      } else if (role == "MANDOR") {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardMandor()));
       } else {
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardKCS()));
       }

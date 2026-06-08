@@ -234,7 +234,7 @@ class DatabaseHelper {
   }
 
   // ================= INSERT PANEN =================
-  Future<int> insertPanen(Map<String, dynamic> data) async {
+  Future<int> insertPanen(Map<String, dynamic> data, {String? base64Foto}) async {
     final db = await database;
 
     // 🔥 Sync Status
@@ -252,16 +252,21 @@ class DatabaseHelper {
       Map<String, dynamic> syncData = Map.from(data);
       syncData['doc_id'] = docId; // Tambahkan doc_id untuk identifikasi unik
       
-      // ... pemrosesan foto ...
-      if (syncData['foto'] != null && syncData['foto'].isNotEmpty && !syncData['foto'].startsWith('data:image')) {
+      // Gunakan base64Foto yang dikirim dari UI jika ada, agar lebih cepat dan pasti
+      if (base64Foto != null && base64Foto.isNotEmpty) {
+        syncData['foto'] = base64Foto;
+      } 
+      // Fallback: pemrosesan foto jika hanya ada path (untuk mode edit atau legacy)
+      else if (syncData['foto'] != null && syncData['foto'].isNotEmpty && !syncData['foto'].startsWith('data:image')) {
         File f = File(syncData['foto']);
         if (await f.exists()) {
           int fileSize = await f.length();
-          if (fileSize < 800000) {
+          if (fileSize < 1048576) { // Naikkan limit ke 1MB untuk keamanan
             List<int> imageBytes = await f.readAsBytes();
             syncData['foto'] = "data:image/jpeg;base64,${base64Encode(imageBytes)}";
           } else {
             syncData['foto'] = "";
+            print("⚠️ Foto ID $id terlalu besar (>1MB) untuk Firestore.");
           }
         }
       }
@@ -313,11 +318,11 @@ class DatabaseHelper {
   }
 
   // ================= ACC / REJECT =================
-  Future<void> accPanen(int id) async {
+  Future<void> updateStatusPanen(int id, String status) async {
     final db = await database;
     await db.update(
       'panen',
-      {'status': 'ACC', 'sync_status': 'update'},
+      {'status': status, 'sync_status': 'update'},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -325,16 +330,12 @@ class DatabaseHelper {
     syncData();
   }
 
+  Future<void> accPanen(int id) async {
+    await updateStatusPanen(id, 'ACC');
+  }
+
   Future<void> rejectPanen(int id) async {
-    final db = await database;
-    await db.update(
-      'panen',
-      {'status': 'REJECT', 'sync_status': 'update'},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
-    // Langsung coba sinkronkan status ke Firebase
-    syncData();
+    await updateStatusPanen(id, 'REJECT');
   }
 
   // ================= TRACKING =================

@@ -237,6 +237,28 @@ class _SinkronisasiPageState extends State<SinkronisasiPage> {
           ),
         ] : [
           IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+            onPressed: () async {
+              final konfirm = await showDialog<bool>(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text("Reset Sinkronisasi"),
+                  content: const Text("Tandai semua data sebagai 'Belum Sync' untuk diupload ulang? (Gunakan jika foto di web kosong)"),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Batal")),
+                    TextButton(onPressed: () => Navigator.pop(context, true), child: const Text("Reset & Sync")),
+                  ],
+                ),
+              );
+              if (konfirm == true) {
+                await DatabaseHelper.instance.resetSyncStatus();
+                await loadData();
+                sync();
+              }
+            },
+            tooltip: "Reset & Re-sync",
+          ),
+          IconButton(
             icon: const Icon(Icons.calendar_today, color: Colors.white),
             onPressed: _pilihTanggal,
             tooltip: "Filter Tanggal",

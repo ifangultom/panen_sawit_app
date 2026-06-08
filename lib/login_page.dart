@@ -80,13 +80,19 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
     setState(() => isLoading = true);
 
     try {
-      final userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: email,
-        password: pass,
-      );
+      // 1. Tambahkan Timeout pada proses login Firebase (misal 10 detik)
+      final userCredential = await FirebaseAuth.instance
+          .signInWithEmailAndPassword(email: email, password: pass)
+          .timeout(const Duration(seconds: 10));
 
       final uid = userCredential.user!.uid;
-      final userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      
+      // 2. Tambahkan Timeout pada pengambilan data Firestore
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get()
+          .timeout(const Duration(seconds: 7));
 
       final userData = userDoc.data() ?? {};
       final role = userData['role'] ?? "KCS";
@@ -97,23 +103,18 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
 
       // Simpan data untuk login offline nanti
       await prefs.setString('last_email', email);
-      await prefs.setString('last_pass', pass); // Simpan untuk verifikasi offline
+      await prefs.setString('last_pass', pass);
       await prefs.setString('current_user', email);
       await prefs.setString('role_$email', role);
       await prefs.setString('afd_login', afdeling);
       
-      // Simpan jabatan ke prefs agar tidak kosong di dashboard admin
       await prefs.setString('jabatan_$email', role == "ADMIN" ? (userData['jabatan'] ?? "Super Admin") : role);
       
-      // Simpan foto jika ada di Firestore
       if (userData['foto'] != null) {
         await prefs.setString('foto_$email', userData['foto']);
       }
       
-      final namaYangSudahDisimpan = prefs.getString('nama_$email') ?? '';
-      if (namaYangSudahDisimpan.isEmpty || namaYangSudahDisimpan != nama) {
-        await prefs.setString('nama_$email', nama);
-      }
+      await prefs.setString('nama_$email', nama);
 
       final kcsMap = {"AFD1": "KCS1", "AFD2": "KCS2", "AFD3": "KCS3"};
       final kcsLogin = kcsMap[afdeling] ?? "KCS1";
@@ -122,54 +123,48 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
       if (!mounted) return;
 
       if (role == "MANDOR") {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardMandor()));
+        Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const DashboardMandor()), (r) => false);
       } else if (role == "ADMIN") {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardAdmin()));
+        Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const DashboardAdmin()), (r) => false);
       } else {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardKCS()));
+        Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const DashboardKCS()), (r) => false);
       }
-    } on FirebaseAuthException catch (e) {
-      // Cek apakah error karena koneksi (bisa beda-beda tiap device)
-      bool isNetworkError = e.code == 'network-request-failed' || 
-                           e.code == 'unavailable' || 
-                           (e.message != null && e.message!.toLowerCase().contains('network'));
+    } catch (e) {
+      // Jika terjadi timeout atau error network, coba Mode Offline
+      bool isTimeout = e is Future<void> || e.toString().contains('TimeoutException');
+      bool isNetworkError = e.toString().contains('network-request-failed') || 
+                           e.toString().contains('unavailable') || 
+                           e.toString().toLowerCase().contains('network');
 
-      if (isNetworkError) {
+      if (isTimeout || isNetworkError) {
         final prefs = await SharedPreferences.getInstance();
         final lastEmail = prefs.getString('last_email');
         final lastPass = prefs.getString('last_pass');
 
         if (email == lastEmail && pass == lastPass) {
           final role = prefs.getString('role_$email') ?? "KCS";
-          
-          // PASTIKAN sesi tersimpan sebelum pindah
           await prefs.setString('current_user', email);
           
           _showSnack("Mode Offline: Login Berhasil");
-          
           if (!mounted) return;
           
-          // Beri jeda sangat singkat agar prefs benar-benar tertulis
-          await Future.delayed(const Duration(milliseconds: 150));
-
           if (role == "MANDOR") {
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardMandor()));
+            Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const DashboardMandor()), (r) => false);
           } else if (role == "ADMIN") {
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardAdmin()));
+            Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const DashboardAdmin()), (r) => false);
           } else {
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardKCS()));
+            Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const DashboardKCS()), (r) => false);
           }
           return;
-        } else {
-          _showSnack("Offline: Email/Password tidak cocok dengan login terakhir", isError: true);
         }
-      } else {
-        _showSnack(e.message ?? "Login gagal", isError: true);
       }
-    } catch (e) {
-      _showSnack("Terjadi kesalahan: $e", isError: true);
+      
+      _showSnack(e.toString().contains('user-not-found') ? "User tidak ditemukan" : 
+                 e.toString().contains('wrong-password') ? "Password salah" : 
+                 "Login gagal: Periksa koneksi internet Anda", isError: true);
+    } finally {
+      if (mounted) setState(() => isLoading = false);
     }
-    setState(() => isLoading = false);
   }
 
   void _showSnack(String msg, {bool isError = false}) {
@@ -179,7 +174,7 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
           children: [
             Icon(isError ? Icons.error_outline : Icons.check_circle, color: Colors.white, size: 18),
             const SizedBox(width: 8),
-            Text(msg),
+            Expanded(child: Text(msg)), // Membungkus teks agar tidak overflow
           ],
         ),
         backgroundColor: isError ? const Color(0xFFD32F2F) : const Color(0xFF1976D2),

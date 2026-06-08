@@ -1,4 +1,5 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class UserHelper {
   // ====== SAVE USER PROFILE ======
@@ -34,8 +35,14 @@ class UserHelper {
 
   // ====== LOGOUT ======
   static Future<void> logout() async {
+    // 1. Sign out dari Firebase agar sesi di server bersih
+    await FirebaseAuth.instance.signOut();
+    
+    // 2. Hapus sesi lokal
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('current_user');
+    // Opsional: Jika ingin membersihkan semua, gunakan prefs.clear() 
+    // tapi hati-hati karena data offline (last_email dll) akan hilang.
   }
 
   // ====== FOTO ======

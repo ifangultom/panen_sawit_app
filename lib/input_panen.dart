@@ -264,13 +264,14 @@ Kota: Kota Medan
     _snack("Data berhasil disimpan");
 
     // Simpan lokal & Sinkronisasi ditangani oleh DatabaseHelper
-    await DatabaseHelper.instance.insertPanen(dataLokal);
+    // Kirimkan juga base64Foto khusus untuk kebutuhan Firestore (Web Admin)
+    await DatabaseHelper.instance.insertPanen(dataLokal, base64Foto: base64Foto);
     await ApiService.kirimPanen(dataLokal);
   }
 
   void _snack(String msg, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
+      content: Text(msg, softWrap: true),
       backgroundColor: isError ? Colors.red[700] : _primaryBlue,
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

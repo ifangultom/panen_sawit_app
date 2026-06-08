@@ -20,16 +20,16 @@ class DetailPanenPage extends StatelessWidget {
     if (path.startsWith('data:image')) return path;
 
     // 2. Handle jika data adalah string Base64 murni (tanpa header)
-    // Jika teks sangat panjang (> 500) dan bukan URL, hampir pasti ini Base64
-    if (path.length > 500 && !path.startsWith('http')) {
+    // Jika teks sangat panjang (> 100) dan mengandung karakter base64, hampir pasti ini Base64
+    if (path.length > 100 && !path.startsWith('http') && !path.startsWith('/') && !path.contains('Users') && !path.contains('com.example')) {
       return 'data:image/jpeg;base64,$path';
     }
     
     // 3. Handle Full URL (Firebase Storage atau Web URL)
     if (path.startsWith('http')) return path;
     
-    // 4. Jika di Web dan path adalah path lokal mobile, arahkan ke storage Laravel
-    if (kIsWeb) {
+    // 4. Jika di Web dan path adalah path lokal mobile (mengandung folder storage mobile)
+    if (kIsWeb && (path.contains('/') || path.contains('\\'))) {
       String fileName = path.split(RegExp(r'[/\\]')).last;
       String baseUrl = ApiService.baseUrl.replaceAll('/api', '');
       return "$baseUrl/storage/panen/$fileName";

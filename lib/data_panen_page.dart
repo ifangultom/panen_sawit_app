@@ -6,9 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'database_helper.dart';
-import 'input_panen.dart';
 import 'detail_panen_page.dart';
 import 'utils/date_utils.dart';
+import 'api_service.dart';
 
 // ─── TEMA BIRU ─────────────────────────────────────────────────────────────
 const _biru       = Color(0xFF0D47A1);
@@ -27,75 +27,56 @@ class DataPanenPage extends StatefulWidget {
 }
 
 class _DataPanenPageState extends State<DataPanenPage> {
-  List<Map<String, dynamic>> data = [];
+  List<Map<String, dynamic>> allData = [];
+  bool isLoading = true;
+  String filter = "Semua";
+  String filterKCS = "Semua";
+  DateTime filterTanggal = DateTime.now();
+  int? selectedMonth;
+  int? selectedYear;
+  String afdelingUser = "";
+  String roleUser = "";
 
-  late String filter;
+  bool seleksiMode = false;
+  Set<String> terpilih = {};
 
   @override
   void initState() {
     super.initState();
     filter = widget.initialFilter;
-    loadUser();
+    _initUser();
   }
-  String filterKCS = "Semua";
-  DateTime filterTanggal = DateTime.now();
-  
-  // Tambahan Filter Bulan & Tahun
-  int? selectedMonth;
-  int? selectedYear;
-  final List<String> months = [
-    "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-    "Juli", "Agustus", "September", "Oktober", "November", "Desember"
-  ];
-  final List<int> years = List.generate(5, (index) => DateTime.now().year - index);
 
-  String afdelingUser = "";
-  String roleUser     = "";
-
-  // ─── SELEKSI ───────────────────────────────────────────────────────────────
-  bool seleksiMode = false;
-  Set<int> selectedIds = {};
-
-
-  // ─── LOAD USER ─────────────────────────────────────────────────────────────
-  Future<void> loadUser() async {
+  Future<void> _initUser() async {
     final prefs = await SharedPreferences.getInstance();
-    String user  = prefs.getString('current_user') ?? "";
-    String afd   = prefs.getString('afd_login')    ?? "";
-    String role  = (prefs.getString('role_$user')   ?? "").toUpperCase();
-
-    // 🔥 FIX: pastikan afdeling terisi untuk Mandor
-    if (afd.isEmpty) {
-      afd = prefs.getString('afdeling_$user') ?? "";
-      if (afd.isEmpty) {
-        final kcsL = prefs.getString('kcs_login') ?? "";
-        afd = AppDateUtils.mapKcsToAfd(kcsL);
-      }
-      if (afd.isNotEmpty) {
-        await prefs.setString('afd_login', afd);
-      }
-    }
-
+    final user = prefs.getString('current_user') ?? "";
     setState(() {
-      afdelingUser = afd;
-      roleUser     = role;
+      roleUser = (prefs.getString('role_$user') ?? "").toUpperCase();
+      afdelingUser = prefs.getString('afd_login') ?? "";
+      if (afdelingUser.isEmpty) {
+        afdelingUser = prefs.getString('afdeling_$user') ?? "";
+        if (afdelingUser.isEmpty) {
+          final kcsL = prefs.getString('kcs_login') ?? "";
+          afdelingUser = AppDateUtils.mapKcsToAfd(kcsL);
+        }
+      }
     });
-
-    await loadData();
+    loadData();
   }
 
-  // Helper untuk memuat data dari SQLite dengan filter tanggal fleksibel
-  Future<List<Map<String, dynamic>>> _loadDataOffline() async {
-    final result = await DatabaseHelper.instance.getAllPanen();
-    List<Map<String, dynamic>> temp = List<Map<String, dynamic>>.from(result);
+  List<Map<String, dynamic>> get _filteredList {
+    List<Map<String, dynamic>> temp = allData.where((e) {
+      bool matchStatus = filter == "Semua" || (e['status'] ?? e['sync_status'] ?? "pending").toString().toUpperCase() == filter.toUpperCase();
+      bool matchKCS = filterKCS == "Semua" || e['kcs'] == filterKCS;
+      return matchStatus && matchKCS;
+    }).toList();
 
-    final String afdNormalized = afdelingUser.replaceAll(' ', '').toUpperCase();
-    if (roleUser != "ADMIN" && afdNormalized.isNotEmpty && afdNormalized != "ALL") {
-      temp = temp.where((e) {
-        String itemAfd = (e['afdeling'] ?? "").toString().replaceAll(' ', '').toUpperCase();
+    if (roleUser != "ADMIN" && afdelingUser.isNotEmpty && afdelingUser != "ALL") {
+      final String afdNormalized = afdelingUser.replaceAll(' ', '').toUpperCase();
+      temp = temp.where((d) {
+        String itemAfd = (d['afdeling'] ?? "").toString().replaceAll(' ', '').toUpperCase();
         if (itemAfd.isEmpty) {
-          itemAfd = (e['kcs'] ?? "").toString().replaceAll(' ', '').toUpperCase();
-          if (itemAfd.contains("KCS")) itemAfd = itemAfd.replaceAll("KCS", "AFD");
+          itemAfd = AppDateUtils.mapKcsToAfd(d['kcs']?.toString());
         }
         return itemAfd == afdNormalized;
       }).toList();
@@ -125,7 +106,7 @@ class _DataPanenPageState extends State<DataPanenPage> {
       final localData = await _loadDataOffline();
       
       final connectivity = await Connectivity().checkConnectivity();
-      if (connectivity != ConnectivityResult.none) {
+      if (!connectivity.contains(ConnectivityResult.none)) {
         // 2. Ambil data online dari Firebase
         Query query = FirebaseFirestore.instance.collection('panen');
 
@@ -190,7 +171,7 @@ class _DataPanenPageState extends State<DataPanenPage> {
         temp = localData;
       }
     } catch (e) {
-      print("Error loading data: $e");
+      debugPrint("Error loading data: $e");
       temp = await _loadDataOffline();
     }
 
@@ -198,179 +179,628 @@ class _DataPanenPageState extends State<DataPanenPage> {
     for (var d in temp) {
       if (d['foto_bytes'] == null && d['foto'] != null && d['foto'].toString().startsWith('data:image')) {
         try {
-          final String path = d['foto'].toString();
-          final base64Data = path.contains(',') ? path.split(',').last : path;
-          d['foto_bytes'] = base64Decode(base64Data.replaceAll(RegExp(r'\s+'), ''));
+          final base64String = d['foto'].split(',').last;
+          d['foto_bytes'] = base64Decode(base64String.replaceAll(RegExp(r'\s+'), ''));
         } catch (_) {}
       }
     }
 
-    // Filter status dan KCS (berlaku di semua mode)
-    if (filter != "Semua") {
-      temp = temp.where((e) =>
-      (e['status'] ?? 'pending').toString().toLowerCase() == filter.toLowerCase()
-      ).toList();
+    if (mounted) {
+      setState(() {
+        allData = temp;
+        isLoading = false;
+      });
     }
-    if (filterKCS != "Semua") {
-      temp = temp.where((e) => (e['kcs'] ?? "") == filterKCS).toList();
-    }
-
-    setState(() => data = temp);
   }
 
-  // ─── ACC / REJECT ──────────────────────────────────────────────────────────
-  Future<void> acc(int id) async {
-    await DatabaseHelper.instance.accPanen(id);
-    // Sync ke Firebase juga
-    final item = data.firstWhere((e) => e['id'] == id, orElse: () => {});
-    if (item.isNotEmpty && item['firebase_id'] != null) {
-      try {
-        await FirebaseFirestore.instance.collection('panen').doc(item['firebase_id']).update({'status': 'ACC'});
-      } catch (_) {}
-    }
-    loadData();
+  Future<List<Map<String, dynamic>>> _loadDataOffline() async {
+    final List<Map<String, dynamic>> local = await DatabaseHelper.instance.getAllPanen();
+    return local;
   }
 
-  Future<void> reject(int id) async {
-    await DatabaseHelper.instance.rejectPanen(id);
-    final item = data.firstWhere((e) => e['id'] == id, orElse: () => {});
-    if (item.isNotEmpty && item['firebase_id'] != null) {
-      try {
-        await FirebaseFirestore.instance.collection('panen').doc(item['firebase_id']).update({'status': 'REJECT'});
-      } catch (_) {}
-    }
-    loadData();
-  }
+  Future<void> _updateStatus(String status, {Set<String>? targetIds}) async {
+    final ids = targetIds ?? Set.from(terpilih);
+    if (ids.isEmpty) return;
+    setState(() => isLoading = true);
 
-  // ─── HAPUS SELECTED ────────────────────────────────────────────────────────
-  Future<void> hapusSelected() async {
-    if (selectedIds.isEmpty) return;
-    final konfirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("Hapus Data"),
-        content: Text("Hapus ${selectedIds.length} data yang dipilih?"),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text("Batal", style: TextStyle(color: _textAbu)),
+    try {
+      final db = DatabaseHelper.instance;
+      final firestore = FirebaseFirestore.instance;
+      final batch = firestore.batch();
+      bool hasFirestoreUpdate = false;
+
+      for (String id in ids) {
+        final item = allData.firstWhere(
+          (e) => (e['firebase_id'] ?? e['doc_id'] ?? e['id'].toString()) == id,
+          orElse: () => {},
+        );
+        if (item.isEmpty) continue;
+        
+        final remoteId = item['firebase_id'] ?? item['doc_id'];
+        if (remoteId != null) {
+          batch.update(firestore.collection('panen').doc(remoteId), {'status': status});
+          hasFirestoreUpdate = true;
+        }
+        
+        if (item['id'] != null) {
+          final database = await db.database;
+          await database.update(
+            'panen',
+            {'status': status, 'sync_status': 'synced'},
+            where: 'id = ?',
+            whereArgs: [item['id']],
+          );
+        }
+      }
+      
+      if (hasFirestoreUpdate) {
+        await batch.commit();
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Berhasil update ${ids.length} data ke $status"),
+            backgroundColor: status == "ACC" ? Colors.green : Colors.red,
+            behavior: SnackBarBehavior.floating,
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red[600]),
-            child: const Text("Hapus", style: TextStyle(color: Colors.white)),
+        );
+        
+        setState(() {
+          terpilih.clear();
+          seleksiMode = false;
+        });
+        loadData();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red)
+        );
+        setState(() => isLoading = false);
+      }
+    }
+  }
+
+  void _selectAll() {
+    setState(() {
+      final filtered = _filteredList;
+      for (var item in filtered) {
+        final id = (item['firebase_id'] ?? item['doc_id'] ?? item['id'].toString());
+        terpilih.add(id);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _filteredList;
+
+    return Scaffold(
+      backgroundColor: _bg,
+      appBar: AppBar(
+        title: seleksiMode 
+            ? Text("${terpilih.length} dipilih", style: const TextStyle(fontWeight: FontWeight.bold))
+            : const Text("Monitoring Panen", style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: _biru,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        actions: [
+          if (seleksiMode) ...[
+            IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() { seleksiMode = false; terpilih.clear(); })),
+          ] else ...[
+            IconButton(
+              icon: const Icon(Icons.checklist_rtl_rounded),
+              onPressed: () => setState(() => seleksiMode = true),
+              tooltip: "Mode Seleksi",
+            ),
+            IconButton(
+              icon: const Icon(Icons.calendar_month_rounded),
+              onPressed: () async {
+                final d = await showDatePicker(
+                  context: context,
+                  initialDate: filterTanggal,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime(2100),
+                );
+                if (d != null) {
+                  setState(() => filterTanggal = d);
+                  loadData();
+                }
+              },
+              tooltip: "Filter Tanggal",
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: loadData,
+              tooltip: "Refresh Data",
+            ),
+          ]
+        ],
+      ),
+      bottomNavigationBar: seleksiMode ? _buildBulkActionBar() : null,
+      body: Column(
+        children: [
+
+          // ── HEADER GRADIENT ────────────────────────────────────────────
+          Container(
+            width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [_biru, _biruMuda],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.only(
+                            bottomLeft: Radius.circular(28),
+                            bottomRight: Radius.circular(28),
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            // Filter dropdowns
+                            Row(
+                              children: [
+                                _dropdown(
+                                  value: filter,
+                                  items: const ["Semua", "pending", "ACC", "REJECT"],
+                                  hint: "Status",
+                                  onChanged: (v) {
+                                    setState(() => filter = v);
+                                  },
+                                ),
+                                const SizedBox(width: 8),
+                                _dropdown(
+                                  value: filterKCS,
+                                  items: const ["Semua", "KCS1", "KCS2", "KCS3"],
+                                  hint: "Pemanen",
+                                  onChanged: (v) {
+                                    setState(() => filterKCS = v);
+                                  },
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 10),
+
+                            // Filter Bulan & Tahun
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+                                    ),
+                                    child: DropdownButtonHideUnderline(
+                                      child: DropdownButton<int?>(
+                                        value: selectedMonth,
+                                        hint: const Text("Pilih Bulan", style: TextStyle(color: Colors.white, fontSize: 13)),
+                                        dropdownColor: _biru,
+                                        icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white),
+                                        items: [
+                                          const DropdownMenuItem(value: null, child: Text("Semua Bulan", style: TextStyle(color: Colors.white))),
+                                          ...List.generate(
+                                              12,
+                                              (i) => DropdownMenuItem(
+                                                    value: i + 1,
+                                                    child: Text("${i + 1}", style: const TextStyle(color: Colors.white)),
+                                                  )),
+                                        ],
+                                        onChanged: (v) {
+                                          setState(() => selectedMonth = v);
+                                          loadData();
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+                                    ),
+                                    child: DropdownButtonHideUnderline(
+                                      child: DropdownButton<int?>(
+                                        value: selectedYear,
+                                        hint: const Text("Pilih Tahun", style: TextStyle(color: Colors.white, fontSize: 13)),
+                                        dropdownColor: _biru,
+                                        icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white),
+                                        items: [
+                                          const DropdownMenuItem(value: null, child: Text("Semua Tahun", style: TextStyle(color: Colors.white))),
+                                          ...List.generate(
+                                              5,
+                                              (i) => DropdownMenuItem(
+                                                    value: DateTime.now().year - i,
+                                                    child: Text("${DateTime.now().year - i}", style: const TextStyle(color: Colors.white)),
+                                                  )),
+                                        ],
+                                        onChanged: (v) {
+                                          setState(() => selectedYear = v);
+                                          loadData();
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 12),
+
+                            // Baris Tanggal
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.calendar_month, color: Colors.white70, size: 20),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    "${filterTanggal.day}-${filterTanggal.month}-${filterTanggal.year}",
+                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                  ),
+                                  const Spacer(),
+                                  TextButton(
+                                    onPressed: () async {
+                                      final d = await showDatePicker(
+                                        context: context,
+                                        initialDate: filterTanggal,
+                                        firstDate: DateTime(2020),
+                                        lastDate: DateTime(2100),
+                                      );
+                                      if (d != null) {
+                                        setState(() => filterTanggal = d);
+                                        loadData();
+                                      }
+                                    },
+                                    style: TextButton.styleFrom(
+                                      backgroundColor: Colors.white.withValues(alpha: 0.2),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                    ),
+                                    child: const Text("Ubah Tanggal", style: TextStyle(fontSize: 12)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+          ),
+
+          // ── LIST DATA ──────────────────────────────────────────────────
+          if (filtered.isNotEmpty && (roleUser == "ADMIN" || roleUser == "MANDOR"))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 16, 0),
+              child: Row(
+                children: [
+                  Text(
+                    seleksiMode ? "${terpilih.length} Dipilih" : "${filtered.length} Data Ditemukan",
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: _textGelap),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () {
+                      if (!seleksiMode) {
+                        setState(() => seleksiMode = true);
+                        _selectAll();
+                      } else {
+                        if (terpilih.length == filtered.length) {
+                          setState(() {
+                            terpilih.clear();
+                            seleksiMode = false;
+                          });
+                        } else {
+                          _selectAll();
+                        }
+                      }
+                    },
+                    icon: Icon(seleksiMode && terpilih.length == filtered.length ? Icons.deselect : Icons.checklist, size: 18),
+                    label: Text(
+                      seleksiMode && terpilih.length == filtered.length ? "Batal Pilih" : "Pilih Semua",
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _biru,
+                      backgroundColor: _biru.withValues(alpha: 0.05),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          Expanded(
+            child: isLoading
+                ? const Center(child: CircularProgressIndicator(color: _biru))
+                : filtered.isEmpty
+                    ? _emptyState()
+                    : ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 80),
+                        itemCount: filtered.length,
+                        itemBuilder: (context, index) {
+                          final item = filtered[index];
+                          final id = (item['firebase_id'] ?? item['doc_id'] ?? item['id'].toString());
+                          final isSelected = terpilih.contains(id);
+                          final status = (item['status'] ?? item['sync_status'] ?? 'pending').toString();
+
+                          return GestureDetector(
+                            onLongPress: () {
+                              if (roleUser == "ADMIN" || roleUser == "MANDOR") {
+                                setState(() {
+                                  seleksiMode = true;
+                                  terpilih.add(id);
+                                });
+                              }
+                            },
+                            onTap: () async {
+                              if (seleksiMode) {
+                                setState(() {
+                                  if (isSelected) terpilih.remove(id);
+                                  else terpilih.add(id);
+                                  if (terpilih.isEmpty) seleksiMode = false;
+                                });
+                              } else {
+                                final refresh = await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => DetailPanenPage(
+                                      data: item,
+                                      isReadOnly: roleUser == "ADMIN",
+                                    ),
+                                  ),
+                                );
+                                if (refresh == true) loadData();
+                              }
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              margin: const EdgeInsets.only(bottom: 12),
+                              decoration: BoxDecoration(
+                                color: isSelected ? _biru.withValues(alpha: 0.08) : Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                                border: isSelected ? Border.all(color: _biru.withValues(alpha: 0.5), width: 1.5) : null,
+                                boxShadow: [
+                                  BoxShadow(color: _biru.withValues(alpha: 0.07), blurRadius: 12, offset: const Offset(0, 4)),
+                                ],
+                              ),
+                              child: Column(
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.all(14),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        if (seleksiMode) ...[
+                                          Padding(
+                                            padding: const EdgeInsets.only(right: 12, top: 20),
+                                            child: Icon(
+                                              isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+                                              color: isSelected ? _biru : _textAbu,
+                                            ),
+                                          ),
+                                        ],
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(12),
+                                          child: _buildThumbnail(item),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                children: [
+                                                  Text(
+                                                    "Blok ${item['blok']} (${item['afdeling'] ?? '-'})",
+                                                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: _textGelap),
+                                                  ),
+                                                  _statusBadge(status),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 4),
+                                              _infoRow(Icons.person_outline_rounded, "Pemanen: ${item['pemanen']}"),
+                                              Row(
+                                                children: [
+                                                  Expanded(child: _infoRow(Icons.eco_outlined, "Matang: ${item['matang'] ?? 0}")),
+                                                  Expanded(child: _infoRow(Icons.eco_outlined, "Mentah: ${item['mentah'] ?? 0}", color: Colors.red)),
+                                                ],
+                                              ),
+                                              _infoRow(Icons.scale_rounded, "Brondolan: ${item['brondolan']} Kg"),
+                                              _infoRow(Icons.notes_rounded, "Catatan: ${item['catatan'] ?? "-"}"),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (!seleksiMode) ...[
+                                    const Divider(height: 1),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                      child: Row(
+                                        children: [
+                                          _actionCapsuleButton(
+                                            onPressed: () async {
+                                              final refresh = await Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (_) => DetailPanenPage(data: item, isReadOnly: true),
+                                                ),
+                                              );
+                                              if (refresh == true) loadData();
+                                            },
+                                            icon: Icons.info_outline,
+                                            label: "Rincian",
+                                            color: _biru,
+                                            bgColor: _biru.withValues(alpha: 0.08),
+                                          ),
+                                          const SizedBox(width: 8),
+                                            if (roleUser == "MANDOR") ...[
+                                            _actionCapsuleButton(
+                                              onPressed: () async {
+                                                final refresh = await Navigator.push(
+                                                  context,
+                                                  MaterialPageRoute(
+                                                    builder: (_) => DetailPanenPage(data: item, isReadOnly: false),
+                                                  ),
+                                                );
+                                                if (refresh == true) loadData();
+                                              },
+                                              icon: Icons.edit_outlined,
+                                              label: "Edit",
+                                              color: _textGelap,
+                                              bgColor: Colors.grey.withValues(alpha: 0.1),
+                                            ),
+                                            if (status.toUpperCase() == "PENDING") ...[
+                                              const Spacer(),
+                                              _actionCircleButton(
+                                                icon: Icons.check,
+                                                color: Colors.green,
+                                                tooltip: "ACC",
+                                                onPressed: () => _updateStatus("ACC", targetIds: {id}),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              _actionCircleButton(
+                                                icon: Icons.close,
+                                                color: Colors.red,
+                                                tooltip: "REJECT",
+                                                onPressed: () => _updateStatus("REJECT", targetIds: {id}),
+                                              ),
+                                            ],
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
           ),
         ],
       ),
     );
-    if (konfirm == true) {
-      for (final id in selectedIds) {
-        await DatabaseHelper.instance.deletePanen(id);
-      }
-      setState(() {
-        selectedIds.clear();
-        seleksiMode = false;
-      });
-      loadData();
-    }
   }
 
-  void toggleSeleksiMode() {
-    setState(() {
-      seleksiMode = !seleksiMode;
-      selectedIds.clear();
-    });
-  }
-
-  void pilihSemua() {
-    setState(() {
-      if (selectedIds.length == data.length) {
-        selectedIds.clear();
-      } else {
-        selectedIds = data.map((e) => e['id'] as int).toSet();
-      }
-    });
-  }
-
-  // ─── PICK DATE ─────────────────────────────────────────────────────────────
-  Future<void> _pickDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: filterTanggal,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-      builder: (context, child) => Theme(
-        data: ThemeData.light().copyWith(
-          colorScheme: const ColorScheme.light(primary: _biru),
+  Widget _buildBulkActionBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 10, offset: const Offset(0, -2))],
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: SafeArea(
+        child: Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () => _updateStatus("ACC"),
+                icon: const Icon(Icons.check_circle, color: Colors.white),
+                label: const Text("ACC SEMUA", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () => _updateStatus("REJECT"),
+                icon: const Icon(Icons.cancel, color: Colors.white),
+                label: const Text("REJECT SEMUA", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ),
+          ],
         ),
-        child: child!,
       ),
     );
-    if (picked != null) {
-      setState(() => filterTanggal = picked);
-      loadData();
-    }
   }
 
-  // ─── STATUS CONFIG ─────────────────────────────────────────────────────────
-  Color _statusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'pending': return const Color(0xFFF57C00);
-      case 'acc':     return const Color(0xFF2E7D32);
-      case 'reject':  return const Color(0xFFC62828);
-      default:        return Colors.grey;
-    }
-  }
-
-  Color _statusBg(String status) {
-    switch (status.toLowerCase()) {
-      case 'pending': return const Color(0xFFFFF3E0);
-      case 'acc':     return const Color(0xFFE8F5E9);
-      case 'reject':  return const Color(0xFFFFEBEE);
-      default:        return Colors.grey.shade100;
-    }
-  }
-
-  IconData _statusIcon(String status) {
-    switch (status.toLowerCase()) {
-      case 'pending': return Icons.access_time_rounded;
-      case 'acc':     return Icons.check_circle_rounded;
-      case 'reject':  return Icons.cancel_rounded;
-      default:        return Icons.help_outline_rounded;
-    }
-  }
-
-  // ─── DROPDOWN STYLE ────────────────────────────────────────────────────────
-  Widget _dropdown({
-    required String value,
-    required List<String> items,
-    required String hint,
-    required void Function(String) onChanged,
-    IconData? icon,
+  Widget _actionCapsuleButton({
+    required VoidCallback onPressed,
+    required IconData icon,
+    required String label,
+    required Color color,
+    required Color bgColor,
   }) {
+    return InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 6),
+            Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _actionCircleButton({required IconData icon, required Color color, required VoidCallback onPressed, String? tooltip}) {
+    return InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(20),
+      child: Tooltip(
+        message: tooltip ?? "",
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            shape: BoxShape.circle,
+            border: Border.all(color: color.withValues(alpha: 0.2)),
+          ),
+          child: Icon(icon, color: color, size: 20),
+        ),
+      ),
+    );
+  }
+
+  Widget _dropdown({required String value, required List<String> items, required String hint, required Function(String) onChanged}) {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _biru.withOpacity(0.2)),
-          boxShadow: [
-            BoxShadow(
-              color: _biru.withOpacity(0.06),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
         ),
         child: DropdownButtonHideUnderline(
           child: DropdownButton<String>(
             value: value,
             isExpanded: true,
-            icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _biru),
-            style: const TextStyle(fontSize: 13, color: _textGelap, fontWeight: FontWeight.w500),
-            items: items.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+            items: items.map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 13)))).toList(),
             onChanged: (v) => onChanged(v!),
           ),
         ),
@@ -378,496 +808,93 @@ class _DataPanenPageState extends State<DataPanenPage> {
     );
   }
 
-  // ─── BUILD ─────────────────────────────────────────────────────────────────
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _bg,
-
-      // ── APP BAR ──────────────────────────────────────────────────────────
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: seleksiMode ? const Color(0xFF0D47A1) : _biru,
-        foregroundColor: Colors.white,
-        title: Text(
-          seleksiMode
-              ? "${selectedIds.length} Dipilih"
-              : "Monitoring Panen",
-          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 0.3),
-        ),
-        actions: seleksiMode
-            ? [
-          // Pilih Semua
-          IconButton(
-            icon: Icon(
-              selectedIds.length == data.length
-                  ? Icons.deselect_rounded
-                  : Icons.select_all_rounded,
-            ),
-            onPressed: pilihSemua,
-            tooltip: "Pilih Semua",
-          ),
-          // Hapus
-          IconButton(
-            icon: const Icon(Icons.delete_rounded),
-            onPressed: selectedIds.isEmpty ? null : hapusSelected,
-            tooltip: "Hapus",
-          ),
-          // Batal
-          IconButton(
-            icon: const Icon(Icons.close_rounded),
-            onPressed: toggleSeleksiMode,
-            tooltip: "Batal",
-          ),
-        ]
-            : [
-          // Pilih
-          IconButton(
-            icon: const Icon(Icons.checklist_rounded),
-            onPressed: toggleSeleksiMode,
-            tooltip: "Pilih Data",
-          ),
-          IconButton(
-            icon: const Icon(Icons.calendar_month_rounded),
-            onPressed: _pickDate,
-            tooltip: "Filter Tanggal",
-          ),
+  Widget _infoRow(IconData icon, String text, {Color? color}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: color ?? _textAbu),
+          const SizedBox(width: 4),
+          Expanded(child: Text(text, style: TextStyle(fontSize: 12, color: color ?? _textAbu), maxLines: 1, overflow: TextOverflow.ellipsis)),
         ],
       ),
+    );
+  }
 
-      body: Column(
+  Widget _emptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          Icon(Icons.inventory_2_outlined, size: 80, color: _textAbu.withOpacity(0.2)),
+          const SizedBox(height: 16),
+          const Text("Tidak ada data ditemukan", style: TextStyle(color: _textAbu, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
 
-          // ── HEADER GRADIENT ────────────────────────────────────────────
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [_biru, _biruMuda],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(28),
-                bottomRight: Radius.circular(28),
-              ),
-            ),
-            child: Column(
-              children: [
-                // Filter dropdowns
-                Row(
-                  children: [
-                    _dropdown(
-                      value: filter,
-                      items: const ["Semua", "pending", "ACC", "REJECT"],
-                      hint: "Status",
-                      onChanged: (v) { setState(() => filter = v); loadData(); },
-                    ),
-                    const SizedBox(width: 8),
-                    _dropdown(
-                      value: filterKCS,
-                      items: const ["Semua", "KCS1", "KCS2", "KCS3"],
-                      hint: "Pemanen",
-                      onChanged: (v) { setState(() => filterKCS = v); loadData(); },
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 10),
-
-                // Filter Bulan & Tahun
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white.withOpacity(0.3)),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<int?>(
-                            value: selectedMonth,
-                            hint: const Text("Pilih Bulan", style: TextStyle(color: Colors.white, fontSize: 13)),
-                            dropdownColor: _biru,
-                            icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white),
-                            items: [
-                              const DropdownMenuItem(value: null, child: Text("Semua Bulan", style: TextStyle(color: _textGelap))),
-                              ...List.generate(12, (i) => DropdownMenuItem(
-                                value: i + 1,
-                                child: Text(months[i], style: const TextStyle(color: _textGelap)),
-                              )),
-                            ],
-                            onChanged: (v) { setState(() => selectedMonth = v); loadData(); },
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white.withOpacity(0.3)),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<int?>(
-                            value: selectedYear,
-                            hint: const Text("Pilih Tahun", style: TextStyle(color: Colors.white, fontSize: 13)),
-                            dropdownColor: _biru,
-                            icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white),
-                            items: [
-                              const DropdownMenuItem(value: null, child: Text("Semua Tahun", style: TextStyle(color: _textGelap))),
-                              ...years.map((y) => DropdownMenuItem(
-                                value: y,
-                                child: Text(y.toString(), style: const TextStyle(color: _textGelap)),
-                              )),
-                            ],
-                            onChanged: (v) { setState(() => selectedYear = v); loadData(); },
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 10),
-
-                // Banner tanggal
-                GestureDetector(
-                  onTap: _pickDate,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.white.withOpacity(0.3)),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.event_rounded, size: 18, color: Colors.white),
-                        const SizedBox(width: 8),
-                        Text(
-                          "${filterTanggal.day}-${filterTanggal.month}-${filterTanggal.year}",
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14,
-                          ),
-                        ),
-                        const Spacer(),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: const Text(
-                            "Ubah Tanggal",
-                            style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
+  Widget _statusBadge(String status) {
+    Color color = _statusColor(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color, width: 0.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            status.toUpperCase() == "ACC" ? Icons.check_circle :
+            status.toUpperCase() == "REJECT" ? Icons.cancel : Icons.access_time_filled,
+            size: 12, color: color,
           ),
-
-          const SizedBox(height: 8),
-
-          // ── JUMLAH DATA ────────────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Row(
-              children: [
-                Text(
-                  "${data.length} Data Ditemukan",
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: _textAbu,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // ── LIST DATA ──────────────────────────────────────────────────
-          Expanded(
-            child: data.isEmpty
-                ? Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.inbox_rounded, size: 64, color: Colors.grey.shade300),
-                  const SizedBox(height: 12),
-                  Text(
-                    "Belum ada data panen",
-                    style: TextStyle(fontSize: 14, color: Colors.grey.shade500, fontWeight: FontWeight.w500),
-                  ),
-                ],
-              ),
-            )
-                : ListView.builder(
-              padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
-              itemCount: data.length,
-              itemBuilder: (context, index) {
-                final item   = data[index];
-                final status = (item['status'] ?? 'pending').toString().toLowerCase();
-                final isPending = status == 'pending';
-                
-                // 🔥 FIX CRASH: Gunakan int.tryParse atau num.parse untuk ID yang aman
-                final itemId = int.tryParse(item['id'].toString()) ?? 0;
-                final isSelected = selectedIds.contains(itemId);
-
-                return GestureDetector(
-                  onLongPress: () {
-                    if (!seleksiMode) {
-                      setState(() {
-                        seleksiMode = true;
-                        selectedIds.add(itemId);
-                      });
-                    }
-                  },
-                  onTap: seleksiMode
-                      ? () {
-                    setState(() {
-                      if (isSelected) {
-                        selectedIds.remove(itemId);
-                      } else {
-                        selectedIds.add(itemId);
-                      }
-                    });
-                  }
-                      : null,
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    decoration: BoxDecoration(
-                      color: isSelected ? _biru.withOpacity(0.08) : Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: isSelected
-                          ? Border.all(color: _biru.withOpacity(0.5), width: 1.5)
-                          : null,
-                      boxShadow: [
-                        BoxShadow(
-                          color: _biru.withOpacity(0.07),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        // ── TOP ROW ──────────────────────────────────
-                        Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-
-                              // Checkbox (hanya di mode seleksi)
-                              if (seleksiMode) ...[
-                                Padding(
-                                  padding: const EdgeInsets.only(right: 8, top: 4),
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 150),
-                                    width: 24, height: 24,
-                                    decoration: BoxDecoration(
-                                      color: isSelected ? _biru : Colors.transparent,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: isSelected ? _biru : _textAbu,
-                                        width: 2,
-                                      ),
-                                    ),
-                                    child: isSelected
-                                        ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
-                                        : null,
-                                  ),
-                                ),
-                              ],
-
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: _buildThumbnail(item),
-                              ),
-
-                              const SizedBox(width: 12),
-
-                              // Info
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      "Blok ${item['blok']} (${item['afdeling'] ?? '-'})",
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 15,
-                                        color: _textGelap,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    _infoRow(Icons.person_outline_rounded, "Pemanen: ${item['pemanen']}"),
-                                    Row(
-                                      children: [
-                                        Expanded(child: _infoRow(Icons.eco_outlined, "Matang: ${item['matang'] ?? 0}")),
-                                        const SizedBox(width: 8),
-                                        Expanded(child: _infoRow(Icons.eco_outlined, "Mentah: ${item['mentah'] ?? 0}", color: Colors.red)),
-                                      ],
-                                    ),
-                                    _infoRow(Icons.scale_rounded, "Brondolan: ${item['brondolan']} Kg"),
-                                    if (item['catatan'] != null && item['catatan'].toString().isNotEmpty)
-                                      _infoRow(Icons.notes_rounded, "Catatan: ${item['catatan']}"),
-                                  ],
-                                ),
-                              ),
-
-                              // Status badge
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: _statusBg(status),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(_statusIcon(status), size: 13, color: _statusColor(status)),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      status.toUpperCase(),
-                                      style: TextStyle(
-                                        color: _statusColor(status),
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 11,
-                                        letterSpacing: 0.5,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        // ── DIVIDER ──────────────────────────────────
-                        if (!seleksiMode) Divider(height: 1, color: Colors.grey.shade100),
-
-                        // ── ACTION ROW ───────────────────────────────
-                        if (!seleksiMode)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                            child: Row(
-                              children: [
-
-                                // Rincian
-                                _actionButton(
-                                  label: "Rincian",
-                                  icon: Icons.info_outline_rounded,
-                                  color: _biru,
-                                  onTap: () async {
-                                    final result = await Navigator.push(
-                                      context,
-                                      MaterialPageRoute(builder: (_) => DetailPanenPage(data: item)),
-                                    );
-                                    if (result == true) loadData();
-                                  },
-                                ),
-
-                                const SizedBox(width: 8),
-
-                                // Edit
-                                _actionButton(
-                                  label: "Edit",
-                                  icon: Icons.edit_outlined,
-                                  color: _textAbu,
-                                  onTap: () async {
-                                    final result = await Navigator.push(
-                                      context,
-                                      MaterialPageRoute(builder: (_) => InputPanenPage(data: item)),
-                                    );
-                                    if (result == true) loadData();
-                                  },
-                                ),
-
-                                const Spacer(),
-
-                                // ACC / Reject (hanya untuk MANDOR/ADMIN dan status pending)
-                                if ((roleUser == "MANDOR" || roleUser == "ADMIN") && isPending) ...[
-                                  _iconActionButton(
-                                    icon: Icons.check_rounded,
-                                    color: const Color(0xFF2E7D32),
-                                    bg: const Color(0xFFE8F5E9),
-                                    onTap: () => acc(item['id']),
-                                    tooltip: "ACC",
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _iconActionButton(
-                                    icon: Icons.close_rounded,
-                                    color: const Color(0xFFC62828),
-                                    bg: const Color(0xFFFFEBEE),
-                                    onTap: () => reject(item['id']),
-                                    tooltip: "Reject",
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
+          const SizedBox(width: 4),
+          Text(
+            status.toUpperCase(),
+            style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
           ),
         ],
       ),
     );
   }
 
-  // ─── HELPER WIDGETS ────────────────────────────────────────────────────────
+  Color _statusBg(String s) {
+    if (s.toUpperCase() == "ACC") return Colors.green.withValues(alpha: 0.1);
+    if (s.toUpperCase() == "REJECT") return Colors.red.withValues(alpha: 0.1);
+    return Colors.orange.withValues(alpha: 0.1);
+  }
+
+  Color _statusColor(String s) {
+    if (s.toUpperCase() == "ACC") return Colors.green;
+    if (s.toUpperCase() == "REJECT") return Colors.red;
+    return Colors.orange;
+  }
 
   Widget _buildThumbnail(Map<String, dynamic> item) {
     final path = (item['foto'] ?? "").toString();
     
-    // 1. Handle Base64 with pre-decoded bytes for performance
+    // 1. Handle Pre-decoded Bytes
     if (item['foto_bytes'] != null) {
-      return Image(
-        image: ResizeImage(
-          MemoryImage(item['foto_bytes']),
-          width: 150,
-        ),
-        width: 72,
-        height: 72,
+      return Image.memory(
+        item['foto_bytes'],
+        width: 72, height: 72,
         fit: BoxFit.cover,
-        filterQuality: FilterQuality.low,
         errorBuilder: (c, e, s) => _buildPlaceholder(),
       );
     }
 
-    // Fallback if bytes not ready but path is Base64
-    if (path.startsWith('data:image')) {
+    // 2. Handle Base64 String (with or without header)
+    if (path.startsWith('data:image') || (path.length > 100 && !path.startsWith('http') && !path.contains('/') && !path.contains('\\'))) {
       try {
-        final base64Data = path.split(',').last.replaceAll(RegExp(r'\s+'), '');
-        final bytes = base64Decode(base64Data);
-        return Image(
-          image: ResizeImage(
-            MemoryImage(bytes),
-            width: 150,
-          ),
-          width: 72,
-          height: 72,
+        final base64Data = path.contains(',') ? path.split(',').last : path;
+        final bytes = base64Decode(base64Data.replaceAll(RegExp(r'\s+'), ''));
+        return Image.memory(
+          bytes,
+          width: 72, height: 72,
           fit: BoxFit.cover,
-          filterQuality: FilterQuality.low,
           errorBuilder: (c, e, s) => _buildPlaceholder(),
         );
       } catch (e) {
@@ -875,108 +902,49 @@ class _DataPanenPageState extends State<DataPanenPage> {
       }
     }
 
-    if (kIsWeb) {
-      if (path.startsWith('http')) {
-        return Image.network(
-          path,
-          width: 72,
-          height: 72,
+    // 3. Handle Local File (Mobile)
+    if (!kIsWeb && path.isNotEmpty && !path.startsWith('http')) {
+      final file = File(path);
+      if (file.existsSync()) {
+        return Image.file(
+          file,
+          width: 72, height: 72,
           fit: BoxFit.cover,
           errorBuilder: (c, e, s) => _buildPlaceholder(),
         );
       }
-      return _buildPlaceholder();
     }
 
-    if (path.isEmpty) return _buildPlaceholder();
+    // 4. Handle URL (Firebase or Web)
+    if (path.startsWith('http')) {
+      return Image.network(
+        path,
+        width: 72, height: 72,
+        fit: BoxFit.cover,
+        errorBuilder: (c, e, s) => _buildPlaceholder(),
+      );
+    }
 
-    return Image.file(
-      File(path),
-      width: 72,
-      height: 72,
-      cacheWidth: 150,
-      fit: BoxFit.cover,
-      errorBuilder: (c, e, s) => _buildPlaceholder(),
-    );
+    // 5. Handle Web Storage Fallback (if path is just filename)
+    if (kIsWeb && path.isNotEmpty) {
+      final fileName = path.split(RegExp(r'[/\\]')).last;
+      final baseUrl = ApiService.baseUrl.replaceAll('/api', '');
+      return Image.network(
+        "$baseUrl/storage/panen/$fileName",
+        width: 72, height: 72,
+        fit: BoxFit.cover,
+        errorBuilder: (c, e, s) => _buildPlaceholder(),
+      );
+    }
+
+    return _buildPlaceholder();
   }
 
   Widget _buildPlaceholder() {
     return Container(
-      width: 72,
-      height: 72,
+      width: 72, height: 72,
       color: _biruPudar,
       child: const Icon(Icons.image_not_supported_rounded, color: _biru, size: 28),
-    );
-  }
-
-  Widget _infoRow(IconData icon, String text, {Color? color}) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 2),
-      child: Row(
-        mainAxisSize: MainAxisSize.max,
-        children: [
-          Icon(icon, size: 12, color: color ?? _textAbu),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(fontSize: 12, color: color ?? _textAbu),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _actionButton({
-    required String label,
-    required IconData icon,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withOpacity(0.2)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 13, color: color),
-            const SizedBox(width: 5),
-            Text(label, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _iconActionButton({
-    required IconData icon,
-    required Color color,
-    required Color bg,
-    required VoidCallback onTap,
-    required String tooltip,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 36, height: 36,
-          decoration: BoxDecoration(
-            color: bg,
-            shape: BoxShape.circle,
-          ),
-          child: Icon(icon, size: 18, color: color),
-        ),
-      ),
     );
   }
 }

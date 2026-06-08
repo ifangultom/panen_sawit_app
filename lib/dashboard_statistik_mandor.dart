@@ -3,6 +3,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'database_helper.dart';
 import 'detail_pemanen_page.dart';
+import 'utils/date_utils.dart';
 
 class DashboardStatistikMandor extends StatefulWidget {
   const DashboardStatistikMandor({super.key});
@@ -138,7 +139,9 @@ class _DashboardStatistikMandorState
     final Map<String, Map<String, int>> map = {};
     for (var item in data) {
       if (selectedKCS != "Semua" &&
-          (item['kcs'] ?? "") != selectedKCS) continue;
+          (item['kcs'] ?? "") != selectedKCS) {
+        continue;
+      }
       if ((item['status'] ?? '') != 'ACC') continue;
 
       final pemanen =
@@ -196,7 +199,7 @@ class _DashboardStatistikMandorState
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withOpacity(0.06),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 8,
               offset: const Offset(0, 3))
         ],
@@ -231,11 +234,11 @@ class _DashboardStatistikMandorState
                 barTouchData: BarTouchData(
                   touchTooltipData: BarTouchTooltipData(
                     getTooltipColor: (group) =>
-                        const Color(0xFF1565C0).withOpacity(0.9),
+                        const Color(0xFF1565C0).withValues(alpha: 0.9),
                     getTooltipItem: (group, groupIndex,
                         rod, rodIndex) {
                       return BarTooltipItem(
-                        '${keys[groupIndex]}\n',
+                        '${AppDateUtils.mapKcsToAfd(keys[groupIndex])}\n',
                         const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
@@ -279,7 +282,7 @@ class _DashboardStatistikMandorState
                           return Padding(
                             padding: const EdgeInsets.only(top: 6),
                             child: Text(
-                              keys[i],
+                              AppDateUtils.mapKcsToAfd(keys[i]),
                               style: const TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.bold,
@@ -323,7 +326,7 @@ class _DashboardStatistikMandorState
                   drawVerticalLine: false,
                   horizontalInterval: maxVal / 4,
                   getDrawingHorizontalLine: (value) => FlLine(
-                    color: Colors.grey.withOpacity(0.15),
+                    color: Colors.grey.withValues(alpha: 0.15),
                     strokeWidth: 1,
                     dashArray: [5, 5],
                   ),
@@ -344,7 +347,7 @@ class _DashboardStatistikMandorState
                           colors: isTouched
                               ? [g[1], g[0]]
                               : [
-                            g[0].withOpacity(0.85),
+                            g[0].withValues(alpha: 0.85),
                             g[1]
                           ],
                           begin: Alignment.bottomCenter,
@@ -353,7 +356,7 @@ class _DashboardStatistikMandorState
                         backDrawRodData: BackgroundBarChartRodData(
                           show: true,
                           toY: maxVal,
-                          color: Colors.grey.withOpacity(0.05),
+                          color: Colors.grey.withValues(alpha: 0.05),
                         ),
                       ),
                     ],
@@ -381,7 +384,7 @@ class _DashboardStatistikMandorState
           borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
-                color: color.withOpacity(0.12),
+                color: color.withValues(alpha: 0.12),
                 blurRadius: 8,
                 offset: const Offset(0, 3))
           ],
@@ -392,7 +395,7 @@ class _DashboardStatistikMandorState
             Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
+                color: color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(icon, size: 18, color: color),
@@ -450,11 +453,11 @@ class _DashboardStatistikMandorState
                 padding: const EdgeInsets.symmetric(
                     horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1565C0).withOpacity(0.1),
+                  color: const Color(0xFF1565C0).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                       color: const Color(0xFF1565C0)
-                          .withOpacity(0.3)),
+                          .withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
@@ -517,7 +520,7 @@ class _DashboardStatistikMandorState
                 borderRadius: BorderRadius.circular(14),
                 boxShadow: [
                   BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
+                      color: Colors.black.withValues(alpha: 0.05),
                       blurRadius: 6,
                       offset: const Offset(0, 2))
                 ],
@@ -525,17 +528,17 @@ class _DashboardStatistikMandorState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.pie_chart,
-                          size: 18, color: Color(0xFF1565C0)),
-                      SizedBox(width: 6),
-                      Text("Total per KCS",
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1565C0))),
-                    ],
-                  ),
+                const Row(
+                  children: [
+                    Icon(Icons.pie_chart,
+                        size: 18, color: Color(0xFF1565C0)),
+                    SizedBox(width: 6),
+                    Text("Total per KCS",
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF1565C0))),
+                  ],
+                ),
                   const SizedBox(height: 10),
                   ...totalKCS.entries.map((e) {
                     final pct = totalJanjang > 0
@@ -553,7 +556,7 @@ class _DashboardStatistikMandorState
                             mainAxisAlignment:
                             MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(e.key,
+                              Text(AppDateUtils.mapKcsToAfd(e.key),
                                   style: const TextStyle(
                                       fontWeight:
                                       FontWeight.w600)),
@@ -580,7 +583,7 @@ class _DashboardStatistikMandorState
                         ],
                       ),
                     );
-                  }).toList(),
+                  }),
                 ],
               ),
             ),
@@ -596,7 +599,7 @@ class _DashboardStatistikMandorState
                 borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
+                      color: Colors.black.withValues(alpha: 0.05),
                       blurRadius: 4)
                 ],
               ),
@@ -606,8 +609,8 @@ class _DashboardStatistikMandorState
                   isExpanded: true,
                   icon: const Icon(Icons.keyboard_arrow_down,
                       color: Color(0xFF1565C0)),
-                  items: const [
-                    DropdownMenuItem(
+                  items: [
+                    const DropdownMenuItem(
                         value: "Semua",
                         child: Row(children: [
                           Icon(Icons.all_inclusive,
@@ -618,26 +621,26 @@ class _DashboardStatistikMandorState
                     DropdownMenuItem(
                         value: "KCS1",
                         child: Row(children: [
-                          Icon(Icons.person,
+                          const Icon(Icons.person,
                               size: 16, color: Colors.teal),
-                          SizedBox(width: 8),
-                          Text("KCS 1")
+                          const SizedBox(width: 8),
+                          Text(AppDateUtils.mapKcsToAfd("KCS 1"))
                         ])),
                     DropdownMenuItem(
                         value: "KCS2",
                         child: Row(children: [
-                          Icon(Icons.person,
+                          const Icon(Icons.person,
                               size: 16, color: Colors.orange),
-                          SizedBox(width: 8),
-                          Text("KCS 2")
+                          const SizedBox(width: 8),
+                          Text(AppDateUtils.mapKcsToAfd("KCS 2"))
                         ])),
                     DropdownMenuItem(
                         value: "KCS3",
                         child: Row(children: [
-                          Icon(Icons.person,
+                          const Icon(Icons.person,
                               size: 16, color: Colors.purple),
-                          SizedBox(width: 8),
-                          Text("KCS 3")
+                          const SizedBox(width: 8),
+                          Text(AppDateUtils.mapKcsToAfd("KCS 3"))
                         ])),
                   ],
                   onChanged: (v) {
@@ -694,7 +697,7 @@ class _DashboardStatistikMandorState
                     side: isMedal
                         ? BorderSide(
                         color: medalColors[index]
-                            .withOpacity(0.5),
+                            .withValues(alpha: 0.5),
                         width: 1.5)
                         : BorderSide.none,
                   ),
@@ -715,7 +718,7 @@ class _DashboardStatistikMandorState
                         color: isMedal
                             ? medalColors[index]
                             : const Color(0xFF1565C0)
-                            .withOpacity(0.1),
+                            .withValues(alpha: 0.1),
                         shape: BoxShape.circle,
                       ),
                       child: Center(
@@ -761,7 +764,7 @@ class _DashboardStatistikMandorState
                     ),
                   ),
                 );
-              }).toList(),
+              }),
 
             const SizedBox(height: 20),
           ],
