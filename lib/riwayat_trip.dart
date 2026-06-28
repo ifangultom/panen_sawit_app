@@ -8,6 +8,7 @@ import 'package:printing/printing.dart';
 import 'database_helper.dart';
 import 'detail_trip_page.dart';
 import 'input_pks_page.dart';
+import 'trip_page.dart';
 import 'utils/date_utils.dart';
 
 class RiwayatTripPage extends StatefulWidget {
@@ -71,6 +72,7 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
       FirebaseFirestore.instance.collection('trips').snapshots().listen((snapshot) {
         allTripsData = snapshot.docs.map((doc) {
           var d = doc.data();
+          d['id_firebase'] = doc.id;
           d['id'] = d['id']?.toString() ?? d['trip_id']?.toString() ?? doc.id;
           return d;
         }).toList();
@@ -416,10 +418,17 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
         ),
       );
 
-      await Printing.sharePdf(
-        bytes: await pdf.save(),
-        filename: "Laporan_Trip_${DateTime.now().millisecondsSinceEpoch}.pdf",
-      );
+      if (kIsWeb) {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdf.save(),
+          name: "Laporan_Trip_${DateTime.now().millisecondsSinceEpoch}.pdf",
+        );
+      } else {
+        await Printing.sharePdf(
+          bytes: await pdf.save(),
+          filename: "Laporan_Trip_${DateTime.now().millisecondsSinceEpoch}.pdf",
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal share PDF: $e")));
@@ -682,6 +691,7 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
                     _cell("Janjang", isHeader: true, textColor: Colors.white),
                     _cell("Brondolan", isHeader: true, textColor: Colors.white),
                     _cell("Netto PKS", isHeader: true, textColor: Colors.white),
+                    _cell("Aksi", isHeader: true, textColor: Colors.white),
                   ],
                 ),
                 ...tripList.map((item) {
@@ -697,6 +707,42 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
                       _cell("${item['total_brondolan'] ?? 0} Kg"),
                       _cell("${totalPks.toStringAsFixed(1)} Kg", 
                         color: totalPks > 0 ? Colors.blue[900] : Colors.orange[900], isBold: true),
+                      Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: PopupMenuButton<String>(
+                          icon: const Icon(Icons.more_vert, size: 18),
+                          onSelected: (val) {
+                            if (val == 'edit') {
+                              Navigator.push(
+                                context, 
+                                MaterialPageRoute(builder: (_) => TripPage(data: item))
+                              ).then((value) {
+                                if (value == true) loadTrip();
+                              });
+                            } else if (val == 'delete') {
+                              _deleteData(item['id_firebase'] ?? item['id']).then((_) => loadTrip());
+                            }
+                          },
+                          itemBuilder: (ctx) => [
+                            const PopupMenuItem(
+                              value: 'edit',
+                              child: Row(children: [
+                                Icon(Icons.edit, size: 18, color: Colors.blue),
+                                SizedBox(width: 8),
+                                Text("Edit", style: TextStyle(color: Colors.blue)),
+                              ]),
+                            ),
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Row(children: [
+                                Icon(Icons.delete, size: 18, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text("Hapus", style: TextStyle(color: Colors.red)),
+                              ]),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   );
                 }),
@@ -706,6 +752,43 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _deleteData(dynamic docId) async {
+    if (docId == null) return;
+    
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Hapus Data Trip"),
+        content: const Text("Yakin ingin menghapus data trip ini?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("BATAL")),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text("HAPUS", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        if (kIsWeb) {
+          await FirebaseFirestore.instance.collection('trips').doc(docId.toString()).delete();
+        } else {
+          await hapusTrip(int.tryParse(docId.toString()) ?? 0);
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Data Trip berhasil dihapus")));
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal menghapus: $e")));
+        }
+      }
+    }
   }
 
   Widget _cell(String text, {bool isHeader = false, bool isBold = false, Color? color, Color? textColor}) {
@@ -1075,7 +1158,7 @@ class _RiwayatTripPageState extends State<RiwayatTripPage> {
                                     MaterialPageRoute(
                                       builder: (_) => DetailTripPage(tripId: item['id']),
                                     ),
-                                  );
+                                  ).then((_) => loadTrip());
                                 },
                                 icon: const Icon(Icons.info_outline, size: 16),
                                 label: const Text("Rincian"),

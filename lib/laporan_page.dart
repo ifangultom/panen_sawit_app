@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pdf/pdf.dart';
@@ -367,10 +368,17 @@ class _LaporanPanenPageState extends State<LaporanPanenPage> {
 
       if (mounted) Navigator.pop(context); // Tutup loading dialog
 
-      await Printing.sharePdf(
-        bytes: await pdf.save(),
-        filename: "${widget.isWebView ? 'Laporan_Panen_Sawit' : 'Laporan_Produksi'}_${dateFormat.format(startDate!)}.pdf",
-      );
+      if (kIsWeb) {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdf.save(),
+          name: "${widget.isWebView ? 'Laporan_Panen_Sawit' : 'Laporan_Produksi'}_${dateFormat.format(startDate!)}.pdf",
+        );
+      } else {
+        await Printing.sharePdf(
+          bytes: await pdf.save(),
+          filename: "${widget.isWebView ? 'Laporan_Panen_Sawit' : 'Laporan_Produksi'}_${dateFormat.format(startDate!)}.pdf",
+        );
+      }
     } catch (e) {
       if (mounted) {
         Navigator.pop(context); // Tutup loading dialog

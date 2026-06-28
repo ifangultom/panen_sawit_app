@@ -5,6 +5,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'database_helper.dart';
+import 'input_pks_page.dart';
 import 'utils/date_utils.dart';
 
 class RiwayatPksPage extends StatefulWidget {
@@ -62,6 +63,7 @@ class _RiwayatPksPageState extends State<RiwayatPksPage> {
             setState(() {
               allData = snapshot.docs.map((doc) {
                 var d = doc.data();
+                d['id_firebase'] = doc.id;
                 // 🔥 Fallback mapping KCS -> AFD
                 if (d['afdeling'] == null || d['afdeling'].toString().isEmpty) {
                   d['afdeling'] = AppDateUtils.mapKcsToAfd(d['kcs']?.toString());
@@ -255,6 +257,14 @@ class _RiwayatPksPageState extends State<RiwayatPksPage> {
       padding: const EdgeInsets.all(20),
       child: Table(
         border: TableBorder.all(color: Colors.grey.withValues(alpha: 0.2)),
+        columnWidths: const {
+          0: FixedColumnWidth(50),
+          1: FlexColumnWidth(2),
+          2: FlexColumnWidth(2),
+          3: FlexColumnWidth(3),
+          4: FlexColumnWidth(2),
+          5: FixedColumnWidth(60),
+        },
         children: [
           TableRow(
             decoration: BoxDecoration(color: const Color(0xFF0D47A1).withValues(alpha: 0.1)),
@@ -264,6 +274,7 @@ class _RiwayatPksPageState extends State<RiwayatPksPage> {
               _cell("Sopir", isHeader: true),
               _cell("Waktu Timbang", isHeader: true),
               _cell("Netto (Kg)", isHeader: true),
+              _cell("Aksi", isHeader: true),
             ],
           ),
           ...filteredData.asMap().entries.map((entry) {
@@ -276,12 +287,81 @@ class _RiwayatPksPageState extends State<RiwayatPksPage> {
                 _cell(item['sopir'] ?? "-"),
                 _cell(item['waktu_timbang'] ?? "-"),
                 _cell("${item['berat_netto'] ?? 0}"),
+                Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert, size: 18),
+                    onSelected: (val) {
+                      if (val == 'edit') {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => InputPksPage(tripId: item['trip_id'], data: item))
+                        ).then((value) {
+                          if (value == true) loadData();
+                        });
+                      } else if (val == 'delete') {
+                        _deleteData(item['id_firebase']).then((_) => loadData());
+                      }
+                    },
+                    itemBuilder: (ctx) => [
+                      const PopupMenuItem(
+                        value: 'edit',
+                        child: Row(children: [
+                          Icon(Icons.edit, size: 18, color: Colors.blue),
+                          SizedBox(width: 8),
+                          Text("Edit", style: TextStyle(color: Colors.blue)),
+                        ]),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Row(children: [
+                          Icon(Icons.delete, size: 18, color: Colors.red),
+                          SizedBox(width: 8),
+                          Text("Hapus", style: TextStyle(color: Colors.red)),
+                        ]),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             );
           }),
         ],
       ),
     );
+  }
+
+  Future<void> _deleteData(String? docId) async {
+    if (docId == null) return;
+    
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Hapus Data PKS"),
+        content: const Text("Yakin ingin menghapus data timbang ini?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("BATAL")),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text("HAPUS", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await FirebaseFirestore.instance.collection('pks').doc(docId).delete();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Data PKS berhasil dihapus")));
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal menghapus: $e")));
+        }
+      }
+    }
   }
 
   Widget _cell(String text, {bool isHeader = false}) {
@@ -470,10 +550,17 @@ class _RiwayatPksPageState extends State<RiwayatPksPage> {
         ),
       );
 
-      await Printing.sharePdf(
-        bytes: await pdf.save(),
-        filename: "Laporan_PKS_${DateTime.now().millisecondsSinceEpoch}.pdf",
-      );
+      if (kIsWeb) {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdf.save(),
+          name: "Laporan_PKS_${DateTime.now().millisecondsSinceEpoch}.pdf",
+        );
+      } else {
+        await Printing.sharePdf(
+          bytes: await pdf.save(),
+          filename: "Laporan_PKS_${DateTime.now().millisecondsSinceEpoch}.pdf",
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal share PDF: $e")));

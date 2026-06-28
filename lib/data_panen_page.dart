@@ -161,8 +161,17 @@ class _DataPanenPageState extends State<DataPanenPage> {
               combined[key] = Map<String, dynamic>.from(d);
               combined[key]!['id'] = localId;
             } else {
-              d['id'] = d['id'] ?? d['local_id'] ?? key.hashCode.abs();
-              combined[key] = Map<String, dynamic>.from(d);
+              // Try to find if this online record exists locally but without firebase_id
+              String localKey = "${d['user']}_${d['local_id'] ?? d['id']}";
+              if (combined.containsKey(localKey)) {
+                 final localId = combined[localKey]!['id'];
+                 combined[key] = Map<String, dynamic>.from(d);
+                 combined[key]!['id'] = localId;
+                 combined.remove(localKey);
+              } else {
+                d['id'] = d['id'] ?? d['local_id'] ?? key.hashCode.abs();
+                combined[key] = Map<String, dynamic>.from(d);
+              }
             }
           }
         }

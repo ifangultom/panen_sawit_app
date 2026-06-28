@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'database_helper.dart';
 import 'map_geo_tagging.dart';
@@ -263,10 +264,16 @@ Kota: Kota Medan
     Navigator.pop(context, true);
     _snack("Data berhasil disimpan");
 
-    // Simpan lokal & Sinkronisasi ditangani oleh DatabaseHelper
-    // Kirimkan juga base64Foto khusus untuk kebutuhan Firestore (Web Admin)
-    await DatabaseHelper.instance.insertPanen(dataLokal, base64Foto: base64Foto);
-    await ApiService.kirimPanen(dataLokal);
+    // Jika mode edit dari Web (ada id_firebase), lakukan update langsung ke Firestore
+    if (widget.data != null && widget.data!['id_firebase'] != null) {
+      String docId = widget.data!['id_firebase'];
+      await FirebaseFirestore.instance.collection('panen').doc(docId).update(dataFirestore);
+    } else {
+      // Simpan lokal & Sinkronisasi ditangani oleh DatabaseHelper
+      // Kirimkan juga base64Foto khusus untuk kebutuhan Firestore (Web Admin)
+      await DatabaseHelper.instance.insertPanen(dataLokal, base64Foto: base64Foto);
+      await ApiService.kirimPanen(dataLokal);
+    }
   }
 
   void _snack(String msg, {bool isError = false}) {
@@ -355,293 +362,298 @@ Kota: Kota Medan
 
       body: FadeTransition(
         opacity: _fadeIn,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(14, 16, 14, 30),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        child: Center(
+          child: Container(
+            constraints: BoxConstraints(maxWidth: kIsWeb ? 800 : double.infinity),
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(kIsWeb ? 24 : 14, 16, kIsWeb ? 24 : 14, 30),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-            // ── FOTO ──────────────────────────────────────────────────────
-            _card(Column(children: [
-              _sectionLabel("DOKUMENTASI", Icons.camera_alt_rounded),
-              GestureDetector(
-                onTap: ambilGambar,
-                child: Container(
-                  height: imageFile != null ? null : 110,
-                  decoration: BoxDecoration(
-                    color: _lightBlue,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: _primaryBlue.withOpacity(0.3)),
+                // ── FOTO ──────────────────────────────────────────────────────
+                _card(Column(children: [
+                  _sectionLabel("DOKUMENTASI", Icons.camera_alt_rounded),
+                  GestureDetector(
+                    onTap: ambilGambar,
+                    child: Container(
+                      height: imageFile != null ? null : 110,
+                      decoration: BoxDecoration(
+                        color: _lightBlue,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: _primaryBlue.withOpacity(0.3)),
+                      ),
+                      child: imageFile != null
+                          ? ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.file(imageFile!, fit: BoxFit.cover))
+                          : Center(child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: const [
+                            Icon(Icons.add_a_photo_rounded, size: 36, color: _primaryBlue),
+                            SizedBox(height: 6),
+                            Text("Ketuk untuk ambil foto",
+                                style: TextStyle(color: _primaryBlue, fontSize: 12,
+                                    fontWeight: FontWeight.w600)),
+                          ])),
+                    ),
                   ),
-                  child: imageFile != null
-                      ? ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.file(imageFile!, fit: BoxFit.cover))
-                      : Center(child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: const [
-                        Icon(Icons.add_a_photo_rounded, size: 36, color: _primaryBlue),
-                        SizedBox(height: 6),
-                        Text("Ketuk untuk ambil foto",
-                            style: TextStyle(color: _primaryBlue, fontSize: 12,
-                                fontWeight: FontWeight.w600)),
-                      ])),
-                ),
-              ),
-            ])),
+                ])),
 
-            // ── LOKASI ────────────────────────────────────────────────────
-            _card(Column(children: [
-              _sectionLabel("LOKASI & TRACKING", Icons.location_on_rounded),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: ambilLokasi,
-                  icon: const Icon(Icons.my_location_rounded, size: 18),
-                  label: const Text("Ambil Lokasi + Tracking",
-                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: _primaryBlue,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12))),
-                ),
-              ),
-              if (latitude.text.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                      color: _lightBlue,
-                      borderRadius: BorderRadius.circular(10)),
-                  child: Row(children: [
-                    const Icon(Icons.gps_fixed, size: 14, color: _primaryBlue),
-                    const SizedBox(width: 6),
-                    Expanded(child: Text(
-                        "Lat: ${latitude.text}  |  Lng: ${longitude.text}",
-                        style: const TextStyle(fontSize: 11, color: _textGelap))),
-                    if (trackingData.isNotEmpty)
-                      const Icon(Icons.check_circle, size: 16, color: _accentBlue),
-                  ]),
-                ),
-              ] else ...[
-                const SizedBox(height: 6),
-                Row(children: const [
-                  SizedBox(width: 2),
-                  Text("Lat: —  |  Lng: —",
-                      style: TextStyle(fontSize: 12, color: _textAbu)),
-                ]),
-              ],
-            ])),
-
-            // ── TANGGAL ───────────────────────────────────────────────────
-            _card(Column(children: [
-              _sectionLabel("TANGGAL PANEN", Icons.event_rounded),
-              TextField(
-                controller: tanggal,
-                readOnly: true,
-                onTap: () async {
-                  DateTime? pick = await showDatePicker(
-                    context: context,
-                    initialDate: DateTime.now(),
-                    firstDate: DateTime(2020),
-                    lastDate: DateTime(2100),
-                    builder: (ctx, child) => Theme(
-                        data: Theme.of(ctx).copyWith(
-                            colorScheme: const ColorScheme.light(primary: _primaryBlue)),
-                        child: child!),
-                  );
-                  if (pick != null) {
-                    tanggal.text = "${pick.year}/${pick.month.toString().padLeft(2,'0')}/${pick.day.toString().padLeft(2,'0')}";
-                  }
-                },
-                style: const TextStyle(fontSize: 14, color: _textGelap, fontWeight: FontWeight.w600),
-                decoration: _dec("Pilih tanggal panen", icon: Icons.calendar_today_rounded),
-              ),
-            ])),
-
-            // ── AFD + PEMANEN ─────────────────────────────────────────────
-            _card(Column(children: [
-              _sectionLabel("AFD & PEMANEN", Icons.group_rounded),
-              if (!_isLoadingBlocks && blokKCS.isEmpty)
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  margin: const EdgeInsets.only(bottom: 10),
-                  decoration: BoxDecoration(color: Colors.red[50], borderRadius: BorderRadius.circular(10)),
-                  child: Row(children: [
-                    const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 18),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text("Data Blok Kosong. Silakan sinkron master data di menu Sinkronisasi.", 
-                      style: TextStyle(color: Colors.red[900], fontSize: 11, fontWeight: FontWeight.normal))),
-                  ]),
-                ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                decoration: BoxDecoration(
-                    color: _lightBlue,
-                    borderRadius: BorderRadius.circular(12)),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButtonFormField<String>(
-                    value: blokKCS.containsKey(selectedKCS) ? selectedKCS : (blokKCS.isNotEmpty ? blokKCS.keys.first : null),
-                    decoration: const InputDecoration(border: InputBorder.none),
-                    icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _primaryBlue),
-                    style: const TextStyle(color: _textGelap, fontWeight: FontWeight.w600, fontSize: 14),
-                    dropdownColor: Colors.white,
-                    hint: const Text("Pilih AFD", style: TextStyle(color: _textAbu, fontSize: 13, fontWeight: FontWeight.normal)),
-                    items: blokKCS.keys.map((kcs) {
-                      return DropdownMenuItem(value: kcs, child: Text(kcs.replaceAll('KCS', 'AFD ')));
-                    }).toList(),
-                    onChanged: (v) => setState(() {
-                      selectedKCS  = v!;
-                      selectedBlok = blokKCS[selectedKCS]!.isNotEmpty ? blokKCS[selectedKCS]!.first : null;
-                      pemanen.text = ""; // Reset nama pemanen saat pindah KCS
-                    }),
+                // ── LOKASI ────────────────────────────────────────────────────
+                _card(Column(children: [
+                  _sectionLabel("LOKASI & TRACKING", Icons.location_on_rounded),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: ambilLokasi,
+                      icon: const Icon(Icons.my_location_rounded, size: 18),
+                      label: const Text("Ambil Lokasi + Tracking",
+                          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: _primaryBlue,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12))),
+                    ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              FutureBuilder<List<String>>(
-                future: DatabaseHelper.instance.getHarvestersByAfdeling(selectedKCS.replaceAll('KCS', 'AFD')),
-                builder: (context, localSnapshot) {
-                  return StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('harvesters')
-                        .where('afdeling', isEqualTo: selectedKCS.replaceAll('KCS', 'AFD'))
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      List<String> listPemanen = localSnapshot.data ?? [];
-                      
-                      if (snapshot.hasData) {
-                        listPemanen = snapshot.data!.docs
-                            .map((doc) => (doc.data() as Map<String, dynamic>)['nama'] as String)
-                            .toList();
-                        // Sort alphabetical
-                        listPemanen.sort();
-                      }
+                  if (latitude.text.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                          color: _lightBlue,
+                          borderRadius: BorderRadius.circular(10)),
+                      child: Row(children: [
+                        const Icon(Icons.gps_fixed, size: 14, color: _primaryBlue),
+                        const SizedBox(width: 6),
+                        Expanded(child: Text(
+                            "Lat: ${latitude.text}  |  Lng: ${longitude.text}",
+                            style: const TextStyle(fontSize: 11, color: _textGelap))),
+                        if (trackingData.isNotEmpty)
+                          const Icon(Icons.check_circle, size: 16, color: _accentBlue),
+                      ]),
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 6),
+                    Row(children: const [
+                      SizedBox(width: 2),
+                      Text("Lat: —  |  Lng: —",
+                          style: TextStyle(fontSize: 12, color: _textAbu)),
+                    ]),
+                  ],
+                ])),
 
-                      return Container(
-                        padding: const EdgeInsets.only(right: 14),
-                        decoration: BoxDecoration(
-                            color: _lightBlue,
-                            borderRadius: BorderRadius.circular(12)),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButtonFormField<String>(
-                            value: listPemanen.contains(pemanen.text) ? pemanen.text : null,
-                            decoration: const InputDecoration(
-                              border: InputBorder.none,
-                              prefixIcon: Icon(Icons.person_rounded, size: 18, color: _accentBlue),
-                            ),
-                            icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _primaryBlue),
-                            style: const TextStyle(color: _textGelap, fontWeight: FontWeight.w600, fontSize: 14),
-                            dropdownColor: Colors.white,
-                            hint: Text(
-                              snapshot.connectionState == ConnectionState.waiting && listPemanen.isEmpty
-                                ? "Memuat data..." 
-                                : "Pilih Nama Pemanen", 
-                              style: const TextStyle(color: _textAbu, fontSize: 13, fontWeight: FontWeight.normal)
-                            ),
-                            items: listPemanen.map((p) =>
-                                DropdownMenuItem<String>(value: p, child: Text(p))).toList(),
-                            onChanged: (v) => setState(() => pemanen.text = v!),
-                          ),
-                        ),
+                // ── TANGGAL ───────────────────────────────────────────────────
+                _card(Column(children: [
+                  _sectionLabel("TANGGAL PANEN", Icons.event_rounded),
+                  TextField(
+                    controller: tanggal,
+                    readOnly: true,
+                    onTap: () async {
+                      DateTime? pick = await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.now(),
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2100),
+                        builder: (ctx, child) => Theme(
+                            data: Theme.of(ctx).copyWith(
+                                colorScheme: const ColorScheme.light(primary: _primaryBlue)),
+                            child: child!),
                       );
-                    }
-                  );
-                }
-              ),
-            ])),
+                      if (pick != null) {
+                        tanggal.text = "${pick.year}/${pick.month.toString().padLeft(2,'0')}/${pick.day.toString().padLeft(2,'0')}";
+                      }
+                    },
+                    style: const TextStyle(fontSize: 14, color: _textGelap, fontWeight: FontWeight.w600),
+                    decoration: _dec("Pilih tanggal panen", icon: Icons.calendar_today_rounded),
+                  ),
+                ])),
 
-            // ── BLOK + TPH ────────────────────────────────────────────────
-            _card(Column(children: [
-              _sectionLabel("BLOK & TPH", Icons.grid_view_rounded),
-              Row(children: [
-                Expanded(
-                  child: Container(
+                // ── AFD + PEMANEN ─────────────────────────────────────────────
+                _card(Column(children: [
+                  _sectionLabel("AFD & PEMANEN", Icons.group_rounded),
+                  if (!_isLoadingBlocks && blokKCS.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      margin: const EdgeInsets.only(bottom: 10),
+                      decoration: BoxDecoration(color: Colors.red[50], borderRadius: BorderRadius.circular(10)),
+                      child: Row(children: [
+                        const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text("Data Blok Kosong. Silakan sinkron master data di menu Sinkronisasi.", 
+                          style: TextStyle(color: Colors.red[900], fontSize: 11, fontWeight: FontWeight.normal))),
+                      ]),
+                    ),
+                  Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14),
                     decoration: BoxDecoration(
-                        color: _lightBlue, borderRadius: BorderRadius.circular(12)),
+                        color: _lightBlue,
+                        borderRadius: BorderRadius.circular(12)),
                     child: DropdownButtonHideUnderline(
                       child: DropdownButtonFormField<String>(
-                        value: (blokKCS.containsKey(selectedKCS) && blokKCS[selectedKCS]!.contains(selectedBlok)) ? selectedBlok : null,
+                        value: blokKCS.containsKey(selectedKCS) ? selectedKCS : (blokKCS.isNotEmpty ? blokKCS.keys.first : null),
                         decoration: const InputDecoration(border: InputBorder.none),
                         icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _primaryBlue),
                         style: const TextStyle(color: _textGelap, fontWeight: FontWeight.w600, fontSize: 14),
                         dropdownColor: Colors.white,
-                        hint: Text(_isLoadingBlocks ? "Memuat..." : "Blok"),
-                        items: (blokKCS[selectedKCS] ?? []).map((b) =>
-                            DropdownMenuItem<String>(value: b, child: Text("Blok $b"))).toList(),
-                        onChanged: (v) => setState(() => selectedBlok = v!),
+                        hint: const Text("Pilih AFD", style: TextStyle(color: _textAbu, fontSize: 13, fontWeight: FontWeight.normal)),
+                        items: blokKCS.keys.map((kcs) {
+                          return DropdownMenuItem(value: kcs, child: Text(kcs.replaceAll('KCS', 'AFD ')));
+                        }).toList(),
+                        onChanged: (v) => setState(() {
+                          selectedKCS  = v!;
+                          selectedBlok = blokKCS[selectedKCS]!.isNotEmpty ? blokKCS[selectedKCS]!.first : null;
+                          pemanen.text = ""; // Reset nama pemanen saat pindah KCS
+                        }),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: tph,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    style: const TextStyle(fontSize: 14, color: _textGelap, fontWeight: FontWeight.w500),
-                    decoration: _dec("TPH", icon: Icons.numbers_rounded),
+                  const SizedBox(height: 10),
+                  FutureBuilder<List<String>>(
+                    future: DatabaseHelper.instance.getHarvestersByAfdeling(selectedKCS.replaceAll('KCS', 'AFD')),
+                    builder: (context, localSnapshot) {
+                      return StreamBuilder<QuerySnapshot>(
+                        stream: FirebaseFirestore.instance
+                            .collection('harvesters')
+                            .where('afdeling', isEqualTo: selectedKCS.replaceAll('KCS', 'AFD'))
+                            .snapshots(),
+                        builder: (context, snapshot) {
+                          List<String> listPemanen = localSnapshot.data ?? [];
+                          
+                          if (snapshot.hasData) {
+                            listPemanen = snapshot.data!.docs
+                                .map((doc) => (doc.data() as Map<String, dynamic>)['nama'] as String)
+                                .toList();
+                            // Sort alphabetical
+                            listPemanen.sort();
+                          }
+
+                          return Container(
+                            padding: const EdgeInsets.only(right: 14),
+                            decoration: BoxDecoration(
+                                color: _lightBlue,
+                                borderRadius: BorderRadius.circular(12)),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButtonFormField<String>(
+                                value: listPemanen.contains(pemanen.text) ? pemanen.text : null,
+                                decoration: const InputDecoration(
+                                  border: InputBorder.none,
+                                  prefixIcon: Icon(Icons.person_rounded, size: 18, color: _accentBlue),
+                                ),
+                                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _primaryBlue),
+                                style: const TextStyle(color: _textGelap, fontWeight: FontWeight.w600, fontSize: 14),
+                                dropdownColor: Colors.white,
+                                hint: Text(
+                                  snapshot.connectionState == ConnectionState.waiting && listPemanen.isEmpty
+                                    ? "Memuat data..." 
+                                    : "Pilih Nama Pemanen", 
+                                  style: const TextStyle(color: _textAbu, fontSize: 13, fontWeight: FontWeight.normal)
+                                ),
+                                items: listPemanen.map((p) =>
+                                    DropdownMenuItem<String>(value: p, child: Text(p))).toList(),
+                                onChanged: (v) => setState(() => pemanen.text = v!),
+                              ),
+                            ),
+                          );
+                        }
+                      );
+                    }
+                  ),
+                ])),
+
+                // ── BLOK + TPH ────────────────────────────────────────────────
+                _card(Column(children: [
+                  _sectionLabel("BLOK & TPH", Icons.grid_view_rounded),
+                  Row(children: [
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        decoration: BoxDecoration(
+                            color: _lightBlue, borderRadius: BorderRadius.circular(12)),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButtonFormField<String>(
+                            value: (blokKCS.containsKey(selectedKCS) && blokKCS[selectedKCS]!.contains(selectedBlok)) ? selectedBlok : null,
+                            decoration: const InputDecoration(border: InputBorder.none),
+                            icon: const Icon(Icons.keyboard_arrow_down_rounded, color: _primaryBlue),
+                            style: const TextStyle(color: _textGelap, fontWeight: FontWeight.w600, fontSize: 14),
+                            dropdownColor: Colors.white,
+                            hint: Text(_isLoadingBlocks ? "Memuat..." : "Blok"),
+                            items: (blokKCS[selectedKCS] ?? []).map((b) =>
+                                DropdownMenuItem<String>(value: b, child: Text("Blok $b"))).toList(),
+                            onChanged: (v) => setState(() => selectedBlok = v!),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: tph,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        style: const TextStyle(fontSize: 14, color: _textGelap, fontWeight: FontWeight.w500),
+                        decoration: _dec("TPH", icon: Icons.numbers_rounded),
+                      ),
+                    ),
+                  ]),
+                ])),
+
+                // ── DATA PRODUKSI ─────────────────────────────────────────────
+                _card(Column(children: [
+                  _sectionLabel("DATA PRODUKSI", Icons.bar_chart_rounded),
+                  Row(children: [_numBox("Tahun Tanam", tahunTanam), _numBox("Brondolan", brondolan)]),
+                  const SizedBox(height: 8),
+                  Row(children: [_numBox("Mentah", mentah), _numBox("Matang", matang)]),
+                  const SizedBox(height: 8),
+                  Row(children: [_numBox("Brond Ketek", brondKetek), _numBox("TBS Ketek", tbsKetek)]),
+                  const SizedBox(height: 8),
+                  Row(children: [_numBox("Tangkai Panjang", tangkai), _numBox("Buah Cacah", buahCacah)]),
+                  const SizedBox(height: 8),
+                  Row(children: [_numBox("Tangkos", tangkos), _numBox("Buah Sakit", buahSakit)]),
+                ])),
+
+                // ── CATATAN ───────────────────────────────────────────────────
+                _card(Column(children: [
+                  _sectionLabel("CATATAN", Icons.notes_rounded),
+                  TextField(
+                    controller: catatan,
+                    maxLines: 3,
+                    style: const TextStyle(fontSize: 14, color: _textGelap),
+                    decoration: _dec("Tambahkan catatan..."),
+                  ),
+                ])),
+
+                const SizedBox(height: 8),
+
+                // ── TOMBOL SIMPAN ─────────────────────────────────────────────
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton(
+                    onPressed: simpan,
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: _primaryBlue,
+                        foregroundColor: Colors.white,
+                        elevation: 4,
+                        shadowColor: _primaryBlue.withOpacity(0.4),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16))),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.save_rounded, size: 20),
+                        SizedBox(width: 8),
+                        Text("SIMPAN DATA PANEN",
+                            style: TextStyle(
+                                fontWeight: FontWeight.w800, fontSize: 14,
+                                letterSpacing: 1.2)),
+                      ],
+                    ),
                   ),
                 ),
               ]),
-            ])),
-
-            // ── DATA PRODUKSI ─────────────────────────────────────────────
-            _card(Column(children: [
-              _sectionLabel("DATA PRODUKSI", Icons.bar_chart_rounded),
-              Row(children: [_numBox("Tahun Tanam", tahunTanam), _numBox("Brondolan", brondolan)]),
-              const SizedBox(height: 8),
-              Row(children: [_numBox("Mentah", mentah), _numBox("Matang", matang)]),
-              const SizedBox(height: 8),
-              Row(children: [_numBox("Brond Ketek", brondKetek), _numBox("TBS Ketek", tbsKetek)]),
-              const SizedBox(height: 8),
-              Row(children: [_numBox("Tangkai Panjang", tangkai), _numBox("Buah Cacah", buahCacah)]),
-              const SizedBox(height: 8),
-              Row(children: [_numBox("Tangkos", tangkos), _numBox("Buah Sakit", buahSakit)]),
-            ])),
-
-            // ── CATATAN ───────────────────────────────────────────────────
-            _card(Column(children: [
-              _sectionLabel("CATATAN", Icons.notes_rounded),
-              TextField(
-                controller: catatan,
-                maxLines: 3,
-                style: const TextStyle(fontSize: 14, color: _textGelap),
-                decoration: _dec("Tambahkan catatan..."),
-              ),
-            ])),
-
-            const SizedBox(height: 8),
-
-            // ── TOMBOL SIMPAN ─────────────────────────────────────────────
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton(
-                onPressed: simpan,
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: _primaryBlue,
-                    foregroundColor: Colors.white,
-                    elevation: 4,
-                    shadowColor: _primaryBlue.withOpacity(0.4),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16))),
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.save_rounded, size: 20),
-                    SizedBox(width: 8),
-                    Text("SIMPAN DATA PANEN",
-                        style: TextStyle(
-                            fontWeight: FontWeight.w800, fontSize: 14,
-                            letterSpacing: 1.2)),
-                  ],
-                ),
-              ),
             ),
-          ]),
+          ),
         ),
       ),
     );

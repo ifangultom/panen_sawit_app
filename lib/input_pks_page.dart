@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'database_helper.dart';
 
 class InputPksPage extends StatefulWidget {
@@ -98,11 +99,19 @@ class _InputPksPageState extends State<InputPksPage> {
       now.second,
     );
 
-    await DatabaseHelper.instance.upsertPks({
+    final pksData = {
       'trip_id': widget.tripId,
       'berat_netto': berat,
       'waktu_timbang': finalDate.toIso8601String(),
-    });
+    };
+
+    if (widget.data != null && widget.data!['id_firebase'] != null) {
+      // Mode Update (Web Admin)
+      await FirebaseFirestore.instance.collection('pks').doc(widget.data!['id_firebase']).update(pksData);
+    } else {
+      // Mode Baru / Upsert (Mobile)
+      await DatabaseHelper.instance.upsertPks(pksData);
+    }
 
     if (!mounted) return;
     _snack("Data timbang PKS berhasil disimpan");
@@ -127,121 +136,126 @@ class _InputPksPageState extends State<InputPksPage> {
         foregroundColor: Colors.white,
         elevation: 0,
       ),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: _biru,
-                borderRadius: const BorderRadius.only(
-                  bottomLeft: Radius.circular(32),
-                  bottomRight: Radius.circular(32),
-                ),
-              ),
-              child: Column(
-                children: [
-                  const Icon(Icons.scale_rounded, color: Colors.white, size: 48),
-                  const SizedBox(height: 16),
-                  const Text(
-                    "Total Muatan Trip",
-                    style: TextStyle(color: Colors.white70, fontSize: 14),
-                  ),
-                  Text(
-                    "$totalJanjang Janjang",
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
+      body: Center(
+        child: Container(
+          constraints: BoxConstraints(maxWidth: kIsWeb ? 600 : double.infinity),
+          child: SingleChildScrollView(
+            child: Column(
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: _biru,
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(32),
+                      bottomRight: Radius.circular(32),
                     ),
                   ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: Card(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                elevation: 4,
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      const Icon(Icons.scale_rounded, color: Colors.white, size: 48),
+                      const SizedBox(height: 16),
                       const Text(
-                        "Informasi Timbangan",
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        "Total Muatan Trip",
+                        style: TextStyle(color: Colors.white70, fontSize: 14),
                       ),
-                      const SizedBox(height: 20),
-                      const Text(
-                        "Tanggal Timbang",
-                        style: TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.w500),
-                      ),
-                      const SizedBox(height: 8),
-                      InkWell(
-                        onTap: () => _selectDate(context),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(12),
-                            color: Colors.grey[50],
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(Icons.calendar_today_rounded, color: _biru, size: 20),
-                              const SizedBox(width: 12),
-                              Text(
-                                "${selectedDate.day} ${months[selectedDate.month - 1]} ${selectedDate.year}",
-                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                              ),
-                              const Spacer(),
-                              Icon(Icons.arrow_drop_down, color: Colors.grey[600]),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      TextField(
-                        controller: beratController,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                        decoration: InputDecoration(
-                          labelText: "Berat Netto PKS",
-                          hintText: "Masukkan berat (Kg)",
-                          prefixIcon: const Icon(Icons.monitor_weight_rounded),
-                          suffixText: "Kg",
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                          filled: true,
-                          fillColor: Colors.grey[50],
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 54,
-                        child: ElevatedButton(
-                          onPressed: simpan,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _biru,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            elevation: 2,
-                          ),
-                          child: const Text(
-                            "SIMPAN DATA PKS",
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                          ),
+                      Text(
+                        "$totalJanjang Janjang",
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ],
                   ),
                 ),
-              ),
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Card(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    elevation: 4,
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            "Informasi Timbangan",
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                          const SizedBox(height: 20),
+                          const Text(
+                            "Tanggal Timbang",
+                            style: TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.w500),
+                          ),
+                          const SizedBox(height: 8),
+                          InkWell(
+                            onTap: () => _selectDate(context),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
+                              decoration: BoxDecoration(
+                                border: Border.all(color: Colors.grey.shade300),
+                                borderRadius: BorderRadius.circular(12),
+                                color: Colors.grey[50],
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.calendar_today_rounded, color: _biru, size: 20),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    "${selectedDate.day} ${months[selectedDate.month - 1]} ${selectedDate.year}",
+                                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                                  ),
+                                  const Spacer(),
+                                  Icon(Icons.arrow_drop_down, color: Colors.grey[600]),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          TextField(
+                            controller: beratController,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                            decoration: InputDecoration(
+                              labelText: "Berat Netto PKS",
+                              hintText: "Masukkan berat (Kg)",
+                              prefixIcon: const Icon(Icons.monitor_weight_rounded),
+                              suffixText: "Kg",
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              filled: true,
+                              fillColor: Colors.grey[50],
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 54,
+                            child: ElevatedButton(
+                              onPressed: simpan,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: _biru,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                elevation: 2,
+                              ),
+                              child: const Text(
+                                "SIMPAN DATA PKS",
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );

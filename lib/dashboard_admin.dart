@@ -23,6 +23,9 @@ import 'riwayat_trip.dart';
 import 'laporan_page.dart';
 import 'detail_pemanen_page.dart';
 import 'detail_panen_page.dart';
+import 'input_panen.dart' as input;
+import 'input_pks_page.dart';
+import 'trip_page.dart';
 import 'analisis_page.dart';
 import 'pengaturan_page.dart';
 import 'user_management_page.dart';
@@ -174,7 +177,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
         if (!mounted) return;
         setState(() {
           allPksData = snapshot.docs.map((doc) {
-            var d = doc.data();
+            var d = doc.data() as Map<String, dynamic>;
             d['id_firebase'] = doc.id;
             d['tanggal'] = d['tanggal'] ?? d['waktu_timbang'] ?? d['tanggal_trip'] ?? d['waktu'];
             d['berat_netto'] = d['berat_netto'] ?? d['netto'] ?? d['berat'] ?? 0;
@@ -188,7 +191,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
         if (!mounted) return;
         setState(() {
           allTripsData = snapshot.docs.map((doc) {
-            var d = doc.data();
+            var d = doc.data() as Map<String, dynamic>;
             d['id_firebase'] = doc.id;
             d['tanggal'] = d['tanggal'] ?? d['tanggal_trip'] ?? d['waktu'] ?? d['waktu_timbang'];
             d['no_plat'] = d['no_plat'] ?? d['kendaraan'] ?? d['truk'] ?? "-";
@@ -2749,6 +2752,7 @@ class _DashboardAdminState extends State<DashboardAdmin> {
           Expanded(flex: 2, child: _headerText("Matang")),
           Expanded(flex: 2, child: _headerText("Mentah")),
           Expanded(flex: 3, child: _headerText("Status")),
+          Expanded(flex: 1, child: _headerText("Aksi")),
         ],
       ),
     ),
@@ -2773,6 +2777,23 @@ class _DashboardAdminState extends State<DashboardAdmin> {
               Expanded(
                 flex: 3,
                 child: Center(child: statusBadge(item['sync_status'] ?? "OFFLINE")),
+              ),
+              Expanded(
+                flex: 1,
+                child: PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert, size: 20, color: Colors.grey),
+                  onSelected: (val) {
+                    if (val == 'edit') {
+                      _navigate(input.InputPanenPage(data: item));
+                    } else if (val == 'delete') {
+                      _deleteData('panen', item['id_firebase']);
+                    }
+                  },
+                  itemBuilder: (ctx) => [
+                    const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 18), SizedBox(width: 8), Text("Edit")])),
+                    const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, size: 18, color: Colors.red), SizedBox(width: 8), Text("Hapus", style: TextStyle(color: Colors.red))])),
+                  ],
+                ),
               ),
             ],
           ),
@@ -3051,6 +3072,20 @@ class _DashboardAdminState extends State<DashboardAdmin> {
                       ],
                     ),
                   ),
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert, size: 20, color: Colors.grey),
+                    onSelected: (val) {
+                      if (val == 'edit') {
+                        _navigate(input.InputPanenPage(data: item));
+                      } else if (val == 'delete') {
+                        _deleteData('panen', item['id_firebase']);
+                      }
+                    },
+                    itemBuilder: (ctx) => [
+                      const PopupMenuItem(value: 'edit', child: Row(children: [Icon(Icons.edit, size: 18), SizedBox(width: 8), Text("Edit")])),
+                      const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, size: 18, color: Colors.red), SizedBox(width: 8), Text("Hapus", style: TextStyle(color: Colors.red))])),
+                    ],
+                  ),
                 ],
               ),
               const Spacer(),
@@ -3304,6 +3339,50 @@ class _DashboardAdminState extends State<DashboardAdmin> {
 
 
   // ================= SIDEBAR HELPERS =================
+  Future<void> _deleteData(String collection, String? docId) async {
+    if (docId == null || docId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("ID Data tidak valid, tidak bisa menghapus."))
+      );
+      return;
+    }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Konfirmasi Hapus"),
+        content: Text("Apakah Anda yakin ingin menghapus data ini dari $collection?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("BATAL")),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text("HAPUS", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await FirebaseFirestore.instance.collection(collection).doc(docId).delete();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Data berhasil dihapus dari $collection"))
+          );
+          // Refresh data setelah penghapusan
+          loadFromFirebase();
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Gagal menghapus data: $e"), backgroundColor: Colors.red)
+          );
+        }
+      }
+    }
+  }
+
   Widget _buildThumbnail(Map<String, dynamic> item) {
     final path = (item['foto'] ?? "").toString();
     
